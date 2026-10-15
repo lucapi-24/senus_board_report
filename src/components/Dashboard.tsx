@@ -155,7 +155,7 @@ export function Dashboard() {
   }, [detail])
 
   const bridge = useMemo(() => {
-    if (!detail) return [] as BridgeStep[]
+    if (!detail || detail.cash_flow.length === 0) return [] as BridgeStep[]
     const steps: BridgeStep[] = [
       { label: 'Operating loss', value: operatingLoss },
       { label: 'Depreciation', value: cf['Depreciation'] ?? 0 },
@@ -197,6 +197,10 @@ export function Dashboard() {
               <p className="dashboard__lede">
                 AI-extracted financials from Senus source documents, presented for Management, the
                 Board, Equity Investors and Credit Providers.
+              </p>
+              <p className="dashboard__note">
+                HY2026 and its HY2025 comparative are extracted from the source report. FY2025 is a
+                full-year reference from summary data.
               </p>
             </div>
             <div className="period-selector" role="tablist">
@@ -247,7 +251,7 @@ export function Dashboard() {
           />
           <KpiCard
             label="Cash"
-            value={formatCompactEur(current?.cash)}
+            value={current?.cash != null ? formatCompactEur(current.cash) : '—'}
             sublabel="Balance sheet"
             icon={Wallet}
             accent="teal"
@@ -273,7 +277,7 @@ export function Dashboard() {
           <div className="panel">
             <div className="panel__head">
               <h2>Revenue, Gross Profit &amp; Operating Loss</h2>
-              <span className="panel__hint">All reported periods</span>
+              <span className="panel__hint">FY = full year · HY = 6-month interim</span>
             </div>
             <ResponsiveContainer width="100%" height={300}>
               <BarChart data={compareData} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>

@@ -380,6 +380,14 @@
   max-width: 560px;
 }
 
+.dashboard__note {
+  color: rgba(255, 255, 255, 0.6);
+  font-size: 13px;
+  line-height: 1.5;
+  max-width: 560px;
+  margin-top: 10px;
+}
+
 .period-selector {
   display: flex;
   gap: 12px;

@@ -34,8 +34,25 @@ def clean_number(text: str) -> Optional[Decimal]:
         return None
 
 
-def extract_from_text(full_text: str) -> Dict[str, Any]:
-    """Extract financial data from PDF text using regex patterns"""
+# Each label pattern ends with a single value group `([\d,\.]+)` or
+# `([-\d,\.]+)`. We rewrite it to also capture a second numeric column so the
+# same patterns can read the comparative (prior-period) figures side by side.
+VALUE_GROUP_RE = re.compile(r"\(\[-?\\d,\\\.\]\+\)")
+TWO_VALUE_GROUPS = r"([-\d,\.]+)(?:\s+([-\d,\.]+))?"
+
+
+def _with_comparative_column(pattern: str) -> str:
+    """Add an optional second capture group for the prior-period column."""
+    return VALUE_GROUP_RE.sub(lambda _: TWO_VALUE_GROUPS, pattern)
+
+
+def extract_from_text(full_text: str, column: int = 0) -> Dict[str, Any]:
+    """Extract financial data from PDF text using regex patterns.
+
+    `column` selects the figure column: 0 = current period (as printed first),
+    1 = comparative prior period (printed second).
+    """
+    group_index = column + 1
     result = {
         "pnl": {},
         "balance_sheet": {},
@@ -61,9 +78,9 @@ def extract_from_text(full_text: str) -> Dict[str, Any]:
 
     for key, patterns in pnl_patterns.items():
         for pattern in patterns:
-            match = re.search(pattern, full_text, re.IGNORECASE)
+            match = re.search(_with_comparative_column(pattern), full_text, re.IGNORECASE)
             if match:
-                val = clean_number(match.group(1))
+                val = clean_number(match.group(group_index))
                 if val is not None:
                     result["pnl"][key] = val
                     break
@@ -89,9 +106,9 @@ def extract_from_text(full_text: str) -> Dict[str, Any]:
 
     for key, patterns in bs_patterns.items():
         for pattern in patterns:
-            match = re.search(pattern, full_text, re.IGNORECASE)
+            match = re.search(_with_comparative_column(pattern), full_text, re.IGNORECASE)
             if match:
-                val = clean_number(match.group(1))
+                val = clean_number(match.group(group_index))
                 if val is not None:
                     result["balance_sheet"][key] = val
                     break
@@ -118,9 +135,9 @@ def extract_from_text(full_text: str) -> Dict[str, Any]:
 
     for key, patterns in cf_patterns.items():
         for pattern in patterns:
-            match = re.search(pattern, full_text, re.IGNORECASE)
+            match = re.search(_with_comparative_column(pattern), full_text, re.IGNORECASE)
             if match:
-                val = clean_number(match.group(1))
+                val = clean_number(match.group(group_index))
                 if val is not None:
                     result["cash_flow"][key] = val
                     break
@@ -272,7 +289,14 @@ def compute_kpis(pnl: Dict, bs: Dict, cf: Dict) -> Dict[str, float]:
     return kpis
 
 
-async def process_pdf(pdf_path: str, period_label: str, start_date: date, end_date: date) -> Dict[str, Any]:
+async def process_pdf(
+    pdf_path: str,
+    period_label: str,
+    start_date: date,
+    end_date: date,
+    column: int = 0,
+    with_narrative: bool = True,
+) -> Dict[str, Any]:
     """Full pipeline: extract text + parse financials + narrative AI + compute KPIs"""
     print(f"Processing {pdf_path} for {period_label}...", file=sys.stderr)
 
@@ -283,10 +307,10 @@ async def process_pdf(pdf_path: str, period_label: str, start_date: date, end_da
             full_text += page.extract_text() or ""
 
     # 2. Parse financial data from text
-    tables = extract_from_text(full_text)
+    tables = extract_from_text(full_text, column=column)
 
     # 3. Extract narrative insights via AI
-    narrative = await extract_narrative_insights(full_text, period_label)
+    narrative = await extract_narrative_insights(full_text, period_label) if with_narrative else {}
 
     # 4. Compute KPIs
     kpis = compute_kpis(tables["pnl"], tables["balance_sheet"], tables["cash_flow"])
@@ -309,14 +333,25 @@ if __name__ == "__main__":
     import sys
 
     if len(sys.argv) < 2:
-        print("Usage: python extract_pdf.py <pdf_path> [period_label] [start_date] [end_date]")
+        print("Usage: python extract_pdf.py <pdf_path> [period_label] [start_date] [end_date] [column]")
         print("Example: python extract_pdf.py ../Senus_HalfYearResultsDec2025.pdf HY2026 2025-07-01 2025-12-31")
+        print("Column: 0 = current period (default), 1 = prior-period comparative column")
         sys.exit(1)
 
     pdf_path = sys.argv[1]
     period_label = sys.argv[2] if len(sys.argv) > 2 else "UNKNOWN"
     start_date = date.fromisoformat(sys.argv[3]) if len(sys.argv) > 3 else date(2025, 7, 1)
     end_date = date.fromisoformat(sys.argv[4]) if len(sys.argv) > 4 else date(2025, 12, 31)
+    column = int(sys.argv[5]) if len(sys.argv) > 5 else 0
 
-    result = asyncio.run(process_pdf(pdf_path, period_label, start_date, end_date))
-    print(json.dumps(result, indent=2))
+    result = asyncio.run(
+        process_pdf(
+            pdf_path,
+            period_label,
+            start_date,
+            end_date,
+            column=column,
+            with_narrative=(column == 0),
+        )
+    )
+    print(json.dumps(result, indent=2, ensure_ascii=False))

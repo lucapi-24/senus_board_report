@@ -55,6 +55,7 @@ Net (decrease) / increase in cash and cash equivalents
 
 def setup_module(module):
     module.result = extract_from_text(SAMPLE_TEXT)
+    module.comparative = extract_from_text(SAMPLE_TEXT, column=1)
 
 
 def test_pnl_interest_payable_skips_suffix():
@@ -81,6 +82,25 @@ def test_balance_sheet_wrapped_and_suffixed_labels():
 def test_cash_flow_wrapped_label_and_ebitda_subtotal():
     assert result["cash_flow"]["Net change in cash"] == Decimal("595055")
     assert result["cash_flow"]["EBITDA"] == Decimal("-473739")
+
+
+def test_comparative_column_reads_prior_period_figures():
+    """column=1 reads the prior-period column (HY2025 comparatives)."""
+    assert comparative["pnl"]["Revenue"] == Decimal("340931")
+    assert comparative["pnl"]["Group operating loss"] == Decimal("-405577")
+    assert comparative["pnl"]["Loss for the period"] == Decimal("-406613")
+
+
+def test_comparative_column_subtotals_and_cash():
+    assert comparative["balance_sheet"]["Total Fixed Assets"] == Decimal("65363")
+    assert comparative["balance_sheet"]["Total Current Assets"] == Decimal("283532")
+    assert comparative["cash_flow"]["Depreciation"] == Decimal("10016")
+    assert comparative["cash_flow"]["EBITDA"] == Decimal("-395561")
+
+
+def test_comparative_column_omits_values_absent_from_prior_year():
+    # Contingent consideration existed only at 31-Dec-25, not at 31-Dec-24.
+    assert "Contingent consideration" not in comparative["balance_sheet"]
 
 
 def test_compute_kpis_from_fixture():

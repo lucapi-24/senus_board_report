@@ -82,7 +82,7 @@ The frontend is a static Vite build served by nginx, which also reverse-proxies
 
 | Table                 | Key columns                                              | Purpose                          |
 |-----------------------|----------------------------------------------------------|----------------------------------|
-| `periods`             | `label`, `start_date`, `end_date`, `source_doc_id`       | A reporting period (HY2026, FY2025) |
+| `periods`             | `label`, `start_date`, `end_date`, `source_doc_id`       | A reporting period (HY2026, HY2025, FY2025) |
 | `pnl_items`           | `period_id`, `line_item`, `value_eur`                    | Income statement lines           |
 | `balance_sheet_items` | `period_id`, `line_item`, `value_eur`                    | Balance sheet lines              |
 | `cash_flow_items`     | `period_id`, `line_item`, `value_eur`                    | Cash flow lines                  |
@@ -101,6 +101,8 @@ The frontend is a static Vite build served by nginx, which also reverse-proxies
    real quirks: labels wrapping onto the next line (`Creditors: ... after more than one\n year`),
    suffixes (`Called up share capital presented as equity`), and unlabelled subtotal rows
    (`Total Fixed Assets`, `Total Current Assets`, `EBITDA`) which are derived from their components.
+   The report is two-column (current + comparative); the parser reads either column, so the
+   **HY2025 comparative is extracted from the same document** for a true like-for-like YoY.
 3. **Sign normalisation** — the source prints costs/losses as positive; losses are stored negative.
 4. **KPI computation** — board metrics computed from the normalised statements (see below).
 5. **Narrative insights** — the LLM reads the narrative sections and returns structured
@@ -179,7 +181,7 @@ locked down with golden-value tests — no number in the app is taken on the mod
    - DSCR was forced onto negative cash flow → now reported as *not significant*.
 2. **Automated tests** — `backend/tests/` pins the parser edge cases and the 19 HY2026 KPI
    golden values; `src/api/client.test.ts` covers the formatters.
-2. **CI** — GitHub Actions runs pytest, Vitest and the production build on every push.
+3. **CI** — GitHub Actions runs pytest, Vitest and the production build on every push.
 
 ---
 
@@ -205,13 +207,14 @@ npm run build     # type-check + production build
 ├── backend/
 │   ├── app/
 │   │   ├── api/financial.py        # REST endpoints
-│   │   ├── core/{config,database}.py
+│   │   ├── core/{config,database,seed}.py
 │   │   ├── models/financial.py     # SQLAlchemy tables
 │   │   ├── schemas/financial.py    # Pydantic response models
 │   │   └── services/ai_insights.py # LLM board commentary
 │   ├── scripts/
 │   │   ├── extract_pdf.py          # PDF → structured data + KPIs
 │   │   ├── load_data.py            # JSON → Postgres
+│   │   ├── dump_periods.py         # Postgres → JSON (regenerate fixtures)
 │   │   └── extracted/*.json        # committed extraction output (seed data)
 │   ├── tests/                      # pytest (parser + KPI golden values)
 │   └── data/                       # source PDFs
@@ -227,9 +230,12 @@ npm run build     # type-check + production build
 
 ## Assumptions & data limitations
 
-- **Periods** — HY2026 = six months ended 31 Dec 2025; FY2025 = year ended 30 Jun 2025.
-- **Source quality** — HY2026 is from the unaudited interim results. FY2025 is available
-  only at summary level, so its balance sheet / cash flow are partial.
+- **Periods** — HY2026 = six months ended 31 Dec 2025; HY2025 = the comparative six months
+  ended 31 Dec 2024 (both extracted from the same interim report); FY2025 = year ended 30 Jun 2025.
+- **Source quality** — HY2026 and HY2025 are from the primary interim report and are fully
+  mapped. FY2025 is available only as summary data, so it is presented as a full-year *P&L
+  reference* only — its balance sheet and cash flow are intentionally left empty rather than
+  showing unverifiable figures.
 - **Sign convention** — the source presents costs and losses as positive; these are normalised
   to negative in the database.
 - **EBITDA** — proxy = operating loss + depreciation (no separate EBITDA line in the source).

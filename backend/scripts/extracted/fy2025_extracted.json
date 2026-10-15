@@ -1,16 +1,23 @@
-Processing /app/data/assignment.pdf for FY2025...
 {
   "period_label": "FY2025",
   "start_date": "2024-07-01",
   "end_date": "2025-06-30",
-  "pnl": {},
+  "pnl": {
+    "Revenue": "836991",
+    "Cost of sales": "188323",
+    "Gross Profit": "648668",
+    "Administrative expenses": "1238931",
+    "Group operating loss": "-590260",
+    "Loss for the period": "-590260"
+  },
   "balance_sheet": {},
   "cash_flow": {},
   "kpis": {
-    "current_ratio": 0
+    "gross_margin": 77.49999701311006,
+    "operating_margin": -70.5216663022661,
+    "net_margin": -70.5216663022661,
+    "admin_expense_ratio": 148.02202174216927
   },
-  "narrative_insights": {
-    "error": "Error code: 404 - {'error': {'message': 'The model `llama-3.1-8b-instant` does not exist or you do not have access to it.', 'type': 'invalid_request_error', 'code': 'model_not_found'}}"
-  },
-  "source_file": "assignment.pdf"
+  "narrative_insights": {},
+  "source_file": "FY2025 annual results (secondary summary)"
 }
