@@ -24,3 +24,13 @@ dist-ssr
 *.sw?
 *.docx
 *.env
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Node test artifacts
+.vitest

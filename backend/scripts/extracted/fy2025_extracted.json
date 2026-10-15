@@ -1,0 +1,16 @@
+Processing /app/data/assignment.pdf for FY2025...
+{
+  "period_label": "FY2025",
+  "start_date": "2024-07-01",
+  "end_date": "2025-06-30",
+  "pnl": {},
+  "balance_sheet": {},
+  "cash_flow": {},
+  "kpis": {
+    "current_ratio": 0
+  },
+  "narrative_insights": {
+    "error": "Error code: 404 - {'error': {'message': 'The model `llama-3.1-8b-instant` does not exist or you do not have access to it.', 'type': 'invalid_request_error', 'code': 'model_not_found'}}"
+  },
+  "source_file": "assignment.pdf"
+}
