@@ -34,3 +34,6 @@ htmlcov/
 
 # Node test artifacts
 .vitest
+
+# Uploaded source documents (runtime)
+backend/data/uploads/

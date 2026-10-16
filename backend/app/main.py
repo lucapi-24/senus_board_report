@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.core.seed import seed_from_disk
-from app.api import financial
+from app.api import financial, documents
 
 
 app = FastAPI(
@@ -19,6 +19,7 @@ app.add_middleware(
 )
 
 app.include_router(financial.router)
+app.include_router(documents.router)
 
 
 @app.on_event("startup")

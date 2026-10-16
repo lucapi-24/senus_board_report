@@ -29,8 +29,11 @@ class Document(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     filename = Column(String(255), nullable=False)          # real uploaded filename
+    stored_path = Column(String(500), nullable=True)        # path on disk of the uploaded file
     doc_type = Column(String(50), nullable=True)            # interim_results | annual_report | ...
     period_label = Column(String(50), nullable=True)
+    period_start = Column(Date, nullable=True)
+    period_end = Column(Date, nullable=True)
     status = Column(String(20), nullable=False, server_default="uploaded")
     page_count = Column(Integer, nullable=True)
     error = Column(Text, nullable=True)                     # extraction failure detail

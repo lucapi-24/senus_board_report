@@ -9,6 +9,7 @@ class Settings(BaseSettings):
     GROQ_BASE_URL: str = "https://api.groq.com/openai/v1"
     GROQ_MODEL: str = "openai/gpt-oss-120b"
     SQL_ECHO: bool = False
+    UPLOAD_DIR: str = "data/uploads"
 
     @field_validator("DATABASE_URL")
     @classmethod
