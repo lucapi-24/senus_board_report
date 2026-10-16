@@ -361,6 +361,15 @@ async def process_pdf(
     # 4. Compute KPIs
     kpis = compute_kpis(tables["pnl"], tables["balance_sheet"], tables["cash_flow"])
 
+    from app.services.validation import validate_period
+
+    validations = [
+        issue.as_dict()
+        for issue in validate_period(
+            tables["pnl"], tables["balance_sheet"], tables["cash_flow"]
+        )
+    ]
+
     return {
         "period_label": period_label,
         "start_date": start_date.isoformat(),
@@ -369,6 +378,7 @@ async def process_pdf(
         "balance_sheet": {k: str(v) for k, v in tables["balance_sheet"].items()},
         "cash_flow": {k: str(v) for k, v in tables["cash_flow"].items()},
         "kpis": kpis,
+        "validations": validations,
         "narrative_insights": narrative,
         "source_file": Path(pdf_path).name,
         "metadata": {

@@ -20,7 +20,9 @@ from app.models.financial import (
     KPI,
     PnLItem,
     Period,
+    Validation,
 )
+from app.services.validation import validate_period
 
 EXTRACTED_DIR = Path(__file__).resolve().parents[2] / "scripts" / "extracted"
 
@@ -78,6 +80,28 @@ async def load_extracted(data: Dict[str, Any]) -> str:
             )
         for metric, value in data.get("kpis", {}).items():
             session.add(KPI(period_id=period.id, metric=metric, value=Decimal(str(value))))
+
+        # Use validations from the extraction output when present, otherwise run
+        # the rules here so committed fixtures still get checked on load.
+        issues = data.get("validations")
+        if issues is None:
+            issues = [
+                issue.as_dict()
+                for issue in validate_period(
+                    data.get("pnl", {}), data.get("balance_sheet", {}), data.get("cash_flow", {})
+                )
+            ]
+        for issue in issues:
+            session.add(
+                Validation(
+                    period_id=period.id,
+                    rule=issue["rule"],
+                    severity=issue["severity"],
+                    message=issue["message"],
+                    expected=issue.get("expected"),
+                    actual=issue.get("actual"),
+                )
+            )
 
         doc.raw_json = json.dumps(data.get("narrative_insights", {}))
         await session.commit()

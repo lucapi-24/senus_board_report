@@ -6,7 +6,7 @@ from typing import List, Optional
 from decimal import Decimal
 
 from app.core.database import get_db
-from app.models.financial import Period, PnLItem, BalanceSheetItem, CashFlowItem, KPI, Document
+from app.models.financial import Period, PnLItem, BalanceSheetItem, CashFlowItem, KPI, Document, Validation
 from app.schemas.financial import (
     PeriodResponse,
     PeriodDetailResponse,
@@ -16,6 +16,7 @@ from app.schemas.financial import (
     KPIResponse,
     FinancialSummary,
     AIInsight,
+    ValidationResponse,
 )
 
 router = APIRouter(prefix="/api", tags=["financial"])
@@ -104,3 +105,19 @@ async def get_ai_insights(period_label: str, db: AsyncSession = Depends(get_db))
     """Get AI-generated insights for a period"""
     from app.services.ai_insights import generate_insights
     return await generate_insights(period_label, db)
+
+
+@router.get("/validations/{period_label}", response_model=List[ValidationResponse])
+async def get_validations(period_label: str, db: AsyncSession = Depends(get_db)):
+    """Get the automated validation issues recorded for a period."""
+    period = (
+        await db.execute(select(Period).where(Period.label == period_label))
+    ).scalars().first()
+    if period is None:
+        raise HTTPException(status_code=404, detail=f"Unknown period: {period_label}")
+    rows = (
+        (await db.execute(select(Validation).where(Validation.period_id == period.id)))
+        .scalars()
+        .all()
+    )
+    return list(rows)

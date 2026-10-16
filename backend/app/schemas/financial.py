@@ -79,3 +79,15 @@ class AIInsight(BaseModel):
     section: str
     insight: str
     confidence: float
+
+
+class ValidationResponse(BaseModel):
+    id: int
+    rule: str
+    severity: str
+    message: str
+    expected: Optional[float] = None
+    actual: Optional[float] = None
+
+    class Config:
+        from_attributes = True
