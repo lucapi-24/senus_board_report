@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field, ConfigDict
-from typing import List, Optional
+from typing import List, Literal, Optional
 from datetime import date
 
 
@@ -21,28 +21,35 @@ class PeriodResponse(PeriodBase):
         from_attributes = True
 
 
-class PnLItemResponse(BaseModel):
+class LineItemResponse(BaseModel):
     line_item: str
     value_eur: float
+    page: Optional[int] = None
+    review_status: Optional[str] = None
+    confidence: Optional[float] = None
+    original_value: Optional[float] = None
 
     class Config:
         from_attributes = True
 
 
-class BalanceSheetItemResponse(BaseModel):
+class PnLItemResponse(LineItemResponse):
+    pass
+
+
+class BalanceSheetItemResponse(LineItemResponse):
+    pass
+
+
+class CashFlowItemResponse(LineItemResponse):
+    pass
+
+
+class ItemUpdate(BaseModel):
+    statement: Literal["pnl", "balance_sheet", "cash_flow"]
     line_item: str
-    value_eur: float
-
-    class Config:
-        from_attributes = True
-
-
-class CashFlowItemResponse(BaseModel):
-    line_item: str
-    value_eur: float
-
-    class Config:
-        from_attributes = True
+    action: Literal["confirm", "correct"]
+    value: Optional[float] = None
 
 
 class KPIResponse(BaseModel):

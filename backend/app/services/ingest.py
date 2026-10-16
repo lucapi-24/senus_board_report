@@ -17,7 +17,7 @@ from decimal import Decimal
 from typing import Any, Dict, List, Tuple
 
 import pdfplumber
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.financial import (
@@ -172,6 +172,46 @@ async def _persist(
     doc.page_count = page_count
     doc.extracted_at = datetime.now(timezone.utc)
     doc.raw_json = json.dumps(proposal)
+
+
+async def recompute_derived(db: AsyncSession, period_id: int) -> None:
+    """Recompute KPIs and validations after a human confirms/corrects an item."""
+    raw: Dict[str, Dict[str, float]] = {}
+    for statement, model in ITEM_MODEL.items():
+        rows = (
+            await db.execute(select(model).where(model.period_id == period_id))
+        ).scalars().all()
+        raw[statement] = {row.line_item: float(row.value_eur) for row in rows}
+
+    kpis = compute_kpis(raw["pnl"], raw["balance_sheet"], raw["cash_flow"])
+    issues = [
+        issue.as_dict()
+        for issue in validate_period(raw["pnl"], raw["balance_sheet"], raw["cash_flow"])
+    ]
+
+    await db.execute(delete(KPI).where(KPI.period_id == period_id))
+    await db.execute(delete(Validation).where(Validation.period_id == period_id))
+    for metric, value in kpis.items():
+        db.add(
+            KPI(
+                period_id=period_id,
+                metric=metric,
+                value=Decimal(str(round(float(value), 6))),
+                kind="derived",
+            )
+        )
+    for issue in issues:
+        db.add(
+            Validation(
+                period_id=period_id,
+                rule=issue["rule"],
+                severity=issue["severity"],
+                message=issue["message"],
+                expected=issue.get("expected"),
+                actual=issue.get("actual"),
+            )
+        )
+    await db.flush()
 
 
 async def ingest_document(document_id: int, db: AsyncSession) -> Dict[str, Any]:

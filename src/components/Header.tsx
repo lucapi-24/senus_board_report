@@ -14,6 +14,8 @@ interface HeaderProps {
   periods?: HeaderPeriod[]
   selected?: string
   onSelect?: (label: string) => void
+  view?: 'overview' | 'documents'
+  onNavigate?: (view: 'overview' | 'documents') => void
 }
 
 function DocumentPicker({
@@ -94,7 +96,7 @@ function DocumentPicker({
   )
 }
 
-export function Header({ user, onLogout, periods = [], selected, onSelect }: HeaderProps) {
+export function Header({ user, onLogout, periods = [], selected, onSelect, view = 'overview', onNavigate }: HeaderProps) {
   return (
     <header className="senus-header">
       <div className="senus-header__inner">
@@ -106,9 +108,20 @@ export function Header({ user, onLogout, periods = [], selected, onSelect }: Hea
         <DocumentPicker periods={periods} selected={selected} onSelect={onSelect} />
 
         <nav className="senus-header__nav" aria-label="Main">
-          <span className="senus-header__link senus-header__link--active">Overview</span>
-          <span className="senus-header__link">Investors</span>
-          <span className="senus-header__link">Documents</span>
+          <button
+            type="button"
+            className={`senus-header__link ${view === 'overview' ? 'senus-header__link--active' : ''}`}
+            onClick={() => onNavigate?.('overview')}
+          >
+            Overview
+          </button>
+          <button
+            type="button"
+            className={`senus-header__link ${view === 'documents' ? 'senus-header__link--active' : ''}`}
+            onClick={() => onNavigate?.('documents')}
+          >
+            Documents
+          </button>
         </nav>
 
         <div className="senus-header__actions">

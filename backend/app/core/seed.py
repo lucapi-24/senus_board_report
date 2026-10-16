@@ -45,6 +45,8 @@ async def load_extracted(data: Dict[str, Any]) -> str:
         doc = Document(
             filename=data.get("source_file", "unknown.pdf"),
             period_label=label,
+            doc_type="interim_results",
+            status="published",
         )
         session.add(doc)
         await session.flush()

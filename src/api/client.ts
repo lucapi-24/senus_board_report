@@ -11,6 +11,10 @@ export interface Period {
 export interface LineItem {
   line_item: string
   value_eur: number
+  page?: number | null
+  review_status?: string | null
+  confidence?: number | null
+  original_value?: number | null
 }
 
 export interface KPIValue {
@@ -57,6 +61,43 @@ export interface AIInsight {
   confidence: number
 }
 
+export interface ReconciledItem {
+  statement: string
+  line_item: string
+  value: number
+  status: string
+  confidence: number
+  page: number | null
+  source: string
+  llm_value: number | null
+  regex_value: number | null
+}
+
+export interface ReviewPayload {
+  pnl: ReconciledItem[]
+  balance_sheet: ReconciledItem[]
+  cash_flow: ReconciledItem[]
+  summary: { matched: number; flagged: number; total: number }
+}
+
+export interface DocumentSummary {
+  id: number
+  filename: string
+  doc_type: string | null
+  period_label: string | null
+  period_start: string | null
+  period_end: string | null
+  status: string
+  page_count: number | null
+  error: string | null
+  uploaded_at: string | null
+  extracted_at: string | null
+}
+
+export interface DocumentDetail extends DocumentSummary {
+  review: ReviewPayload | null
+}
+
 async function get<T>(path: string): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`)
   if (!res.ok) {
@@ -65,12 +106,52 @@ async function get<T>(path: string): Promise<T> {
   return (await res.json()) as T
 }
 
+async function send<T>(path: string, method: string, body?: unknown): Promise<T> {
+  const res = await fetch(`${API_BASE}${path}`, {
+    method,
+    headers: body === undefined ? undefined : { 'Content-Type': 'application/json' },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  })
+  if (!res.ok) {
+    const detail = await res.text()
+    throw new Error(detail || `Request failed: ${res.status} ${res.statusText}`)
+  }
+  return (await res.json()) as T
+}
+
+export interface UploadFields {
+  period_label: string
+  start_date: string
+  end_date: string
+  doc_type?: string
+}
+
 export const api = {
   periods: () => get<Period[]>('/api/periods'),
   summary: () => get<FinancialSummary[]>('/api/summary'),
   periodDetail: (label: string) => get<PeriodDetail>(`/api/periods/${label}`),
   kpis: (label: string) => get<KPIValue[]>(`/api/kpis/${label}`),
   insights: (label: string) => get<AIInsight[]>(`/api/insights/${label}`),
+  documents: () => get<DocumentSummary[]>('/api/documents'),
+  document: (id: number) => get<DocumentDetail>(`/api/documents/${id}`),
+  uploadDocument: async (file: File, fields: UploadFields) => {
+    const form = new FormData()
+    form.append('file', file)
+    form.append('period_label', fields.period_label)
+    form.append('start_date', fields.start_date)
+    form.append('end_date', fields.end_date)
+    if (fields.doc_type) form.append('doc_type', fields.doc_type)
+    const res = await fetch(`${API_BASE}/api/documents`, { method: 'POST', body: form })
+    if (!res.ok) throw new Error((await res.text()) || 'Upload failed')
+    return (await res.json()) as DocumentSummary
+  },
+  processDocument: (id: number) => send<DocumentSummary>(`/api/documents/${id}/process`, 'POST'),
+  publishDocument: (id: number) => send<DocumentSummary>(`/api/documents/${id}/publish`, 'POST'),
+  updateItem: (
+    label: string,
+    body: { statement: string; line_item: string; action: 'confirm' | 'correct'; value?: number },
+  ) => send<LineItem>(`/api/periods/${label}/items`, 'PATCH', body),
+  publishPeriod: (label: string) => send<Period>(`/api/periods/${label}/publish`, 'POST'),
 }
 
 export function toNumber(value: string | number | null | undefined): number {
