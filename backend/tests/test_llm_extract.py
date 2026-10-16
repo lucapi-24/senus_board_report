@@ -1,0 +1,105 @@
+import asyncio
+import json
+
+from app.services.llm_extract import (
+    StatementLine,
+    extract_structured,
+    ground_items,
+    normalize_payload,
+    parse_value,
+)
+
+
+def test_parse_value_handles_report_formats():
+    assert parse_value("669,550") == 669550.0
+    assert parse_value("€64,861") == 64861.0
+    assert parse_value("(483,753)") == -483753.0
+    assert parse_value("-1,036") == -1036.0
+    assert parse_value(836991) == 836991.0
+    assert parse_value("") is None
+    assert parse_value(None) is None
+
+
+def test_normalize_payload_reads_the_three_statements():
+    payload = {
+        "statements": {
+            "pnl": [{"label": "Revenue", "amount": "354,813", "page": 5, "source_text": "Revenue 354,813"}],
+            "balance_sheet": [{"line_item": "Goodwill", "value": 669550, "page": 5}],
+            "cash_flow": [],
+        }
+    }
+    lines = normalize_payload(payload)
+    by_key = {(line.statement, line.line_item): line for line in lines}
+    assert by_key[("pnl", "Revenue")].value == 354813.0
+    assert by_key[("pnl", "Revenue")].page == 5
+    assert by_key[("balance_sheet", "Goodwill")].value == 669550.0
+
+
+def test_ground_items_accepts_values_present_on_their_page():
+    pages = [(5, "Revenue 354,813\nGoodwill 669,550")]
+    lines = [
+        StatementLine("pnl", "Revenue", 354813.0, 5),
+        StatementLine("balance_sheet", "Goodwill", 669550.0, 5),
+    ]
+    grounded, ungrounded = ground_items(pages, lines)
+    assert len(grounded) == 2
+    assert ungrounded == []
+
+
+def test_ground_items_ignores_sign_and_separators():
+    pages = [(6, "Operating loss ......... (483,753)")]
+    (line,) = [StatementLine("pnl", "Group operating loss", -483753.0, 6)]
+    grounded, ungrounded = ground_items(pages, [line])
+    assert grounded and not ungrounded
+
+
+def test_ground_items_rejects_hallucinated_figures():
+    pages = [(5, "Revenue 354,813")]
+    lines = [
+        StatementLine("pnl", "Revenue", 354813.0, 5),
+        StatementLine("pnl", "Invented", 999999.0, 5),
+        StatementLine("pnl", "Wrong page", 354813.0, 6),
+    ]
+    grounded, ungrounded = ground_items(pages, lines)
+    assert [l.line_item for l in grounded] == ["Revenue"]
+    assert {x.line_item for x in ungrounded} == {"Invented", "Wrong page"}
+
+
+def _fake_client(content: str):
+    """Stub returning a fixed payload, so no network is touched."""
+
+    class _Message:
+        def __init__(self):
+            self.content = content
+
+    class _Choice:
+        def __init__(self):
+            self.message = _Message()
+
+    class _Response:
+        def __init__(self):
+            self.choices = [_Choice()]
+
+    class _Completions:
+        async def create(self, *args, **kwargs):
+            return _Response()
+
+    class _Chat:
+        completions = _Completions()
+
+    return type("Client", (), {"chat": _Chat()})()
+
+
+def test_extract_structured_returns_only_grounded_lines():
+    content = json.dumps(
+        {
+            "pnl": [
+                {"line_item": "Revenue", "value": "354,813", "page": 5, "source_text": "Revenue 354,813"},
+                {"line_item": "Made up", "value": "999,999", "page": 5, "source_text": ""},
+            ]
+        }
+    )
+    pages = [(5, "Revenue 354,813")]
+    lines = asyncio.run(extract_structured(pages, "HY2026", client=_fake_client(content)))
+    assert [line.line_item for line in lines] == ["Revenue"]
+    assert lines[0].grounded is True
