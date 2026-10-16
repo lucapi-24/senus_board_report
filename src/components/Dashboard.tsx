@@ -23,8 +23,6 @@ import {
   Activity,
   Sparkles,
   RefreshCw,
-  Boxes,
-  Gauge,
 } from 'lucide-react'
 import {
   api,
@@ -41,40 +39,65 @@ const CHART_COLORS = ['#20948B', '#023C28', '#FFBC7D', '#5FB3AC', '#8FBF9F']
 
 const COST_LABELS = ['Cost of sales', 'Distribution costs', 'Administrative expenses']
 
+function shiftYear(iso: string, years: number): string {
+  const [y, m, d] = iso.split('-').map(Number)
+  return `${y + years}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`
+}
+
+function monthSpan(period: { start_date: string; end_date: string }): number {
+  const [y1, m1] = period.start_date.split('-').map(Number)
+  const [y2, m2] = period.end_date.split('-').map(Number)
+  return (y2 - y1) * 12 + (m2 - m1)
+}
+
 interface BridgeStep {
   label: string
   value: number
   total?: boolean
+  page?: number
 }
 
-export function Dashboard() {
-  const [summary, setSummary] = useState<FinancialSummary[]>([])
-  const [selected, setSelected] = useState<string>('')
+interface RatioItem {
+  label: string
+  value: string
+  note?: string
+  tone?: 'neg' | 'pos'
+}
+
+function RatioPanel({ title, hint, items }: { title: string; hint?: string; items: RatioItem[] }) {
+  return (
+    <div className="panel">
+      <div className="panel__head">
+        <h2>{title}</h2>
+        {hint && <span className="panel__hint">{hint}</span>}
+      </div>
+      <ul className="ratios">
+        {items.map((item) => (
+          <li key={item.label} className="ratios__row">
+            <div className="ratios__main">
+              <span className="ratios__label">{item.label}</span>
+              <span className={`ratios__value ${item.tone ? `is-${item.tone}` : ''}`}>
+                {item.value}
+              </span>
+            </div>
+            {item.note && <p className="ratios__note">{item.note}</p>}
+          </li>
+        ))}
+      </ul>
+    </div>
+  )
+}
+
+interface DashboardProps {
+  summary: FinancialSummary[]
+  selected: string
+  onSelect: (label: string) => void
+}
+
+export function Dashboard({ summary, selected, onSelect }: DashboardProps) {
   const [detail, setDetail] = useState<PeriodDetail | null>(null)
   const [insights, setInsights] = useState<AIInsight[]>([])
   const [insightsLoading, setInsightsLoading] = useState(false)
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState('')
-
-  useEffect(() => {
-    let active = true
-    api
-      .summary()
-      .then((data) => {
-        if (!active) return
-        setSummary(data)
-        if (data.length) setSelected(data[0].period.label)
-        setLoading(false)
-      })
-      .catch((e) => {
-        if (!active) return
-        setError(e instanceof Error ? e.message : 'Failed to load data')
-        setLoading(false)
-      })
-    return () => {
-      active = false
-    }
-  }, [])
 
   useEffect(() => {
     if (!selected) return
@@ -154,37 +177,102 @@ export function Dashboard() {
     return map
   }, [detail])
 
+  const provenance = detail?.provenance ?? null
+  const meta = detail?.metadata ?? null
+
+  const pageRange = (obj?: Record<string, number>): [number, number] | null => {
+    const pages = Object.values(obj ?? {}).filter((n) => Number.isFinite(n))
+    if (!pages.length) return null
+    return [Math.min(...pages), Math.max(...pages)]
+  }
+
+  const formatPages = (pages: [number, number] | null) =>
+    !pages ? '' : pages[0] === pages[1] ? `p.${pages[0]}` : `pp.${pages[0]}–${pages[1]}`
+
+  const statements = [
+    { name: 'P&L', pages: pageRange(provenance?.pnl) },
+    { name: 'Balance sheet', pages: pageRange(provenance?.balance_sheet) },
+    { name: 'Cash flow', pages: pageRange(provenance?.cash_flow) },
+  ].filter((s) => s.pages)
+
   const bridge = useMemo(() => {
     if (!detail || detail.cash_flow.length === 0) return [] as BridgeStep[]
+    const p = detail.provenance
     const steps: BridgeStep[] = [
-      { label: 'Operating loss', value: operatingLoss },
-      { label: 'Depreciation', value: cf['Depreciation'] ?? 0 },
-      { label: 'Working capital', value: cf['Working capital movements'] ?? 0 },
-      { label: 'Interest paid', value: cf['Interest paid'] ?? 0 },
-      { label: 'Capex', value: cf['Capex'] ?? 0 },
+      { label: 'Operating loss', value: operatingLoss, page: p?.pnl?.['Group operating loss'] },
+      { label: 'Depreciation', value: cf['Depreciation'] ?? 0, page: p?.cash_flow?.['Depreciation'] },
+      {
+        label: 'Working capital',
+        value: cf['Working capital movements'] ?? 0,
+        page: p?.cash_flow?.['Working capital movements'],
+      },
+      { label: 'Interest paid', value: cf['Interest paid'] ?? 0, page: p?.cash_flow?.['Interest paid'] },
+      { label: 'Capex', value: cf['Capex'] ?? 0, page: p?.cash_flow?.['Capex'] },
     ]
     const fcf = steps.reduce((acc, s) => acc + s.value, 0)
     return [...steps, { label: 'Free cash flow', value: fcf, total: true }]
   }, [detail, operatingLoss, cf])
 
-  if (loading) {
-    return (
-      <div className="state">
-        <RefreshCw className="spin" size={28} />
-        <p>Loading board report…</p>
-      </div>
-    )
-  }
+  const bs: Record<string, number> = {}
+  detail?.balance_sheet.forEach((b) => (bs[b.line_item] = toNumber(b.value_eur)))
 
-  if (error) {
-    return (
-      <div className="state state--error">
-        <p>Could not load financial data.</p>
-        <code>{error}</code>
-        <p className="state__hint">Ensure the API is running at http://localhost:8000.</p>
-      </div>
-    )
-  }
+  const netCurrentAssets = bs['Net Current Assets'] ?? null
+  const contingentConsideration = Math.abs(bs['Contingent consideration'] ?? 0)
+  const netCurrentAssetsEx =
+    netCurrentAssets !== null ? netCurrentAssets + contingentConsideration : null
+
+  const costOfSales = toNumber(detail?.pnl.find((p) => p.line_item === 'Cost of sales')?.value_eur)
+  const costRatio = revenue !== 0 ? (costOfSales / revenue) * 100 : null
+
+  // Compare like-for-like: same point one year earlier AND the same period
+  // length, so a half-year is never measured against a full year (FY2025 and
+  // HY2025 share the same start date).
+  const prior = current
+    ? summary.find(
+        (s) =>
+          s.period.start_date === shiftYear(current.period.start_date, -1) &&
+          monthSpan(s.period) === monthSpan(current.period),
+      )
+    : undefined
+  const yoy =
+    current && prior && toNumber(prior.revenue) !== 0
+      ? {
+          label: prior.period.label,
+          pct:
+            ((toNumber(current.revenue) - toNumber(prior.revenue)) / toNumber(prior.revenue)) * 100,
+        }
+      : null
+
+  const seasonality = (() => {
+    for (const fy of summary) {
+      if (monthSpan(fy.period) < 10) continue
+      const h1 = summary.find(
+        (s) => s.period.start_date === fy.period.start_date && monthSpan(s.period) < 10,
+      )
+      if (!h1) continue
+      const rev = toNumber(fy.revenue)
+      const h1v = toNumber(h1.revenue)
+      if (!rev) continue
+      return {
+        fy: fy.period.label,
+        h1: h1v,
+        h2: rev - h1v,
+        h1pct: (h1v / rev) * 100,
+        h2pct: ((rev - h1v) / rev) * 100,
+      }
+    }
+    return null
+  })()
+
+  const fullYear = summary.find((s) => monthSpan(s.period) >= 10)
+  const fyRevenue = toNumber(fullYear?.revenue)
+
+  const eurOrDash = (v: number | null | undefined) =>
+    v === null || v === undefined || Number.isNaN(v) ? '—' : formatCompactEur(v)
+  const multOrDash = (v: number | null | undefined) =>
+    v === null || v === undefined || Number.isNaN(v) ? '—' : `${v.toFixed(2)}x`
+  const netCashMovement =
+    cf['Cash at end'] != null ? toNumber(cf['Cash at end']) - toNumber(cf['Cash at start']) : null
 
   return (
     <div className="dashboard">
@@ -212,7 +300,7 @@ export function Dashboard() {
                   className={`period-selector__btn ${
                     selected === s.period.label ? 'is-active' : ''
                   }`}
-                  onClick={() => setSelected(s.period.label)}
+                  onClick={() => onSelect(s.period.label)}
                 >
                   <strong>{s.period.label}</strong>
                   <span>
@@ -231,7 +319,12 @@ export function Dashboard() {
           <KpiCard
             label="Revenue"
             value={formatCompactEur(revenue)}
-            sublabel={current?.period.label}
+            sublabel={
+              yoy
+                ? `YoY vs ${yoy.label} · ${monthSpan(current!.period) + 1}-month`
+                : current?.period.label
+            }
+            trend={yoy ? yoy.pct : null}
             icon={Euro}
             accent="teal"
           />
@@ -364,7 +457,10 @@ export function Dashboard() {
                   const isTotal = step.total === true
                   return (
                     <div key={step.label} className={`bridge__row ${isTotal ? 'is-total' : ''}`}>
-                      <span className="bridge__label">{step.label}</span>
+                      <span className="bridge__label">
+                        {step.label}
+                        {step.page && <span className="src-tag" title="Source page">p.{step.page}</span>}
+                      </span>
                       <span className={`bridge__value ${step.value < 0 ? 'is-neg' : 'is-pos'}`}>
                         {step.value < 0 ? '−' : '+'}
                         {formatCompactEur(Math.abs(step.value))}
@@ -379,33 +475,215 @@ export function Dashboard() {
           </div>
         </section>
 
-        {/* Liquidity strip */}
+        {/* Key ratios */}
         <section className="grid-3">
-          <div className="stat">
-            <Gauge size={20} />
-            <div>
-              <span className="stat__label">DSCR</span>
-              <span className="stat__value">{kpiMap['dscr'] != null ? `${kpiMap['dscr'].toFixed(2)}x` : '—'}</span>
+          <RatioPanel
+            title="Profitability"
+            hint={current?.period.label}
+            items={[
+              { label: 'Gross margin', value: formatPct(kpiMap['gross_margin']) },
+              {
+                label: 'Operating margin',
+                value: formatPct(kpiMap['operating_margin']),
+                tone: kpiMap['operating_margin'] < 0 ? 'neg' : undefined,
+              },
+              {
+                label: 'EBITDA margin',
+                value: formatPct(kpiMap['ebitda_margin']),
+                tone: kpiMap['ebitda_margin'] < 0 ? 'neg' : undefined,
+              },
+              {
+                label: 'Net margin',
+                value: formatPct(kpiMap['net_margin']),
+                tone: kpiMap['net_margin'] < 0 ? 'neg' : undefined,
+              },
+              { label: 'Cost of sales / revenue', value: formatPct(costRatio) },
+              { label: 'Admin expenses / revenue', value: formatPct(kpiMap['admin_expense_ratio']) },
+            ]}
+          />
+
+          <RatioPanel
+            title="Cash &amp; liquidity"
+            hint={current?.period.label}
+            items={[
+              {
+                label: 'Free cash flow',
+                value: eurOrDash(kpiMap['fcf']),
+                tone: kpiMap['fcf'] < 0 ? 'neg' : undefined,
+              },
+              { label: 'Monthly burn', value: eurOrDash(kpiMap['monthly_burn']) },
+              {
+                label: 'Cash runway',
+                value: kpiMap['runway_months'] != null ? `${kpiMap['runway_months'].toFixed(1)} mo` : '—',
+              },
+              {
+                label: 'Net cash (cash less long-term debt)',
+                value: eurOrDash(kpiMap['net_cash']),
+                tone: kpiMap['net_cash'] < 0 ? 'neg' : undefined,
+              },
+              {
+                label: 'Net cash movement',
+                value: eurOrDash(netCashMovement),
+                tone: netCashMovement != null && netCashMovement < 0 ? 'neg' : undefined,
+              },
+              { label: 'Current ratio', value: multOrDash(kpiMap['current_ratio']) },
+              {
+                label: 'Current ratio (ex-contingent)',
+                value: multOrDash(kpiMap['current_ratio_ex_contingent']),
+              },
+              {
+                label: 'Working capital',
+                value: eurOrDash(netCurrentAssets),
+                tone: netCurrentAssets != null && netCurrentAssets < 0 ? 'neg' : undefined,
+                note:
+                  contingentConsideration > 0
+                    ? `Net current assets including the Loamin contingent consideration. Excluding it: ${formatCompactEur(
+                        netCurrentAssetsEx,
+                      )}.`
+                    : undefined,
+              },
+            ]}
+          />
+
+          <RatioPanel
+            title="Solvency &amp; returns"
+            hint={current?.period.label}
+            items={[
+              { label: 'Debt / equity', value: formatPct(kpiMap['debt_to_equity']) },
+              { label: 'Equity / total assets', value: formatPct(kpiMap['equity_ratio']) },
+              {
+                label: 'Intangibles / total assets',
+                value: formatPct(kpiMap['intangibles_ratio']),
+              },
+              {
+                label: 'Interest cover',
+                value: multOrDash(kpiMap['interest_cover']),
+                tone: kpiMap['interest_cover'] < 0 ? 'neg' : undefined,
+              },
+              {
+                label: 'DSCR',
+                value: multOrDash(kpiMap['dscr']),
+                note: 'Not meaningful while operating cash flow is negative.',
+              },
+              {
+                label: 'ROCE',
+                value: formatPct(kpiMap['roce']),
+                tone: kpiMap['roce'] < 0 ? 'neg' : undefined,
+              },
+              {
+                label: 'ROCE (ex-contingent)',
+                value: formatPct(kpiMap['roce_ex_contingent']),
+                tone: kpiMap['roce_ex_contingent'] < 0 ? 'neg' : undefined,
+              },
+              {
+                label: 'ROE',
+                value: formatPct(kpiMap['roe']),
+                tone: kpiMap['roe'] < 0 ? 'neg' : undefined,
+              },
+            ]}
+          />
+        </section>
+
+        {/* Growth & guidance */}
+        <section className="grid-2">
+          <RatioPanel
+            title="Growth &amp; Senus 2030"
+            hint={current?.period.label}
+            items={[
+              {
+                label: 'Revenue growth YoY',
+                value: yoy ? formatPct(yoy.pct) : '—',
+                tone: yoy ? (yoy.pct >= 0 ? 'pos' : 'neg') : undefined,
+                note: yoy
+                  ? `${current?.period.label} vs ${yoy.label} — same-length period one year earlier.`
+                  : 'No prior-year comparable of the same length is loaded for this period.',
+              },
+              { label: 'Senus 2030 target CAGR', value: '50.0%' },
+              {
+                label: 'Required FY2026 revenue',
+                value: fyRevenue ? formatCompactEur(fyRevenue * 1.5) : '—',
+                note: fyRevenue
+                  ? `From FY2025 revenue of ${formatCompactEur(fyRevenue)} to stay on a 50% CAGR track.`
+                  : undefined,
+              },
+              {
+                label: 'FY2025 seasonality (H1 / H2)',
+                value: seasonality
+                  ? `${seasonality.h1pct.toFixed(0)}% / ${seasonality.h2pct.toFixed(0)}%`
+                  : '—',
+                note: seasonality
+                  ? `H1 ${formatCompactEur(seasonality.h1)} vs implied H2 ${formatCompactEur(
+                      seasonality.h2,
+                    )}.`
+                  : undefined,
+              },
+            ]}
+          />
+
+          <div className="panel">
+            <div className="panel__head">
+              <h2>How to read these ratios</h2>
             </div>
+            <ul className="notes">
+              {(kpiMap['interest_cover'] < 0 || kpiMap['dscr'] == null) && (
+                <li>
+                  <strong>Coverage metrics are not meaningful.</strong> DSCR and interest cover are
+                  negative or undefined because operating profit and operating cash flow are negative
+                  — there is no EBITDA to service debt.
+                </li>
+              )}
+              {contingentConsideration > 0 && (
+                <li>
+                  <strong>Contingent consideration shapes liquidity.</strong> Including the{' '}
+                  {formatCompactEur(contingentConsideration)} earn-out the current ratio is{' '}
+                  {multOrDash(kpiMap['current_ratio'])}; excluding it it is{' '}
+                  {multOrDash(kpiMap['current_ratio_ex_contingent'])}.
+                </li>
+              )}
+              <li>
+                <strong>Short history.</strong> Only three periods are available, so trend and
+                seasonality views are indicative rather than statistically robust.
+              </li>
+            </ul>
           </div>
-          <div className="stat">
-            <Boxes size={20} />
+        </section>
+
+        {/* Source & data quality */}
+        <section className="panel provenance">
+          <div className="panel__head">
+            <h2>Source &amp; data quality</h2>
+            <span className="panel__hint">{current?.period.label}</span>
+          </div>
+          <div className="provenance__grid">
             <div>
-              <span className="stat__label">Current Ratio</span>
-              <span className="stat__value">
-                {kpiMap['current_ratio'] ? `${kpiMap['current_ratio'].toFixed(2)}x` : '—'}
+              <span className="provenance__label">Source document</span>
+              <span className="provenance__value">{meta?.document_title ?? '—'}</span>
+            </div>
+            <div>
+              <span className="provenance__label">Reporting period</span>
+              <span className="provenance__value">
+                {meta?.period_months ? `${meta.period_months} months` : '—'} ·{' '}
+                {meta?.audited ? 'Audited' : 'Unaudited'}
+              </span>
+            </div>
+            <div>
+              <span className="provenance__label">Currency</span>
+              <span className="provenance__value">{meta?.currency ?? 'EUR'}</span>
+            </div>
+            <div>
+              <span className="provenance__label">Figures traced to</span>
+              <span className="provenance__value">
+                {statements.length
+                  ? statements.map((s) => `${s.name} ${formatPages(s.pages)}`).join(' · ')
+                  : '—'}
               </span>
             </div>
           </div>
-          <div className="stat">
-            <Wallet size={20} />
-            <div>
-              <span className="stat__label">Net Cash Movement</span>
-              <span className="stat__value">
-                {formatCompactEur(toNumber(cf['Cash at end']) - toNumber(cf['Cash at start']))}
-              </span>
-            </div>
-          </div>
+          <p className="provenance__note">
+            Every figure in the P&amp;L, balance sheet and cash flow is extracted from the source
+            document; the tags on the cash-flow bridge show the page each line comes from.
+            {!meta?.audited && ' These interim accounts are unaudited.'}
+          </p>
         </section>
 
         {/* AI insights */}

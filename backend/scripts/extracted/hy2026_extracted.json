@@ -20,8 +20,10 @@
     "Goodwill": "669550",
     "Development Costs": "239765",
     "Tangible Assets": "42006",
+    "Total Fixed Assets": "951321",
     "Debtors": "188149",
     "Cash and cash equivalents": "735189",
+    "Total Current Assets": "923339",
     "Creditors < 1yr": "-387105",
     "Contingent consideration": "-850000",
     "Net Current Assets": "-313766",
@@ -31,9 +33,7 @@
     "Share Capital": "25000",
     "Share Premium": "300000",
     "Retained Earnings": "236081",
-    "Equity": "561081",
-    "Total Fixed Assets": "951321",
-    "Total Current Assets": "923338"
+    "Equity": "561081"
   },
   "cash_flow": {
     "Loss for the period": "-485144",
@@ -64,23 +64,83 @@
     "monthly_burn": 69798.5,
     "runway_months": 10.533020050574153,
     "net_cash": 658715.0,
-    "current_ratio": 0.7463699524292603,
-    "current_ratio_ex_contingent": 2.3852391470014593,
-    "total_assets": 1874659.0,
-    "equity_ratio": 29.929763226272083,
-    "intangibles_ratio": 48.50562155570693,
+    "current_ratio": 0.7463707607680835,
+    "current_ratio_ex_contingent": 2.385241730279898,
+    "total_assets": 1874660.0,
+    "equity_ratio": 29.92974726083663,
+    "intangibles_ratio": 48.505595681350215,
     "debt_to_equity": 13.629761121834457,
     "interest_cover": -347.77354421279654,
-    "roce": -75.87639635230899,
-    "roce_annualised": -151.75279270461797,
+    "roce": -75.87627734077844,
+    "roce_annualised": -151.7525546815569,
+    "roce_ex_contingent": -32.520007663582184,
     "roe": -86.46594698448175
   },
   "narrative_insights": {
-    "revenue_commentary": "Revenue grew modestly 4.1% to \u20ac354.8k, driven by new enterprise contracts such as the full\u2011supply\u2011chain project with First Milk, an expanded phase\u20112 deal with Bank of Ireland and a multi\u2011year \u20ac300k Biochar partnership with the Irish Department of Agriculture. Seasonal headwinds persisted as a wet winter delayed soil\u2011sampling activities, causing a slight decline in sampling volume versus prior years. The company also noted continued sign\u2011ups from dairy processors (Arla, Scottish Habitat, Tirlan, Lakeland Dairies) that helped offset the weather impact.",
-    "cost_commentary": "Operating loss widened to \u20ac483.8k as the company absorbed integration costs from the Loamin acquisition, including AI platform embedding and related technology upgrades. Hiring intensified, with Loamin founders joining senior leadership and additional sales and R&D staff added to support new solutions. R&D spending rose to support the Biochar grant and the expanded AI\u2011driven soil intelligence suite, contributing to higher expense levels despite gross\u2011margin improvement.",
-    "strategic_milestones": "Senus completed its first acquisition (Loamin Ltd.) and leveraged it to strengthen UK presence and AI capabilities. The firm raised \u20ac1.1\u202fmillion in new equity and executed a direct listing on Euronext Access Dublin, becoming a public company. Strategic partnerships were secured with First Milk, Bank of Ireland, and the Department of Agriculture, Food and the Marine, underscoring market validation of its Natural Capital platform.",
-    "pipeline_outlook": "The pipeline remains robust, with roughly \u20ac700k of closed deals across 21 enterprise customers and an additional \u20ac500k of qualified opportunities in the funnel. Ten commercial contracts were signed in the last two months of 2025, valued at about \u20ac425k, and advanced discussions with financial institutions are expanding. Management expressed confidence that the momentum will translate into stronger revenue growth for the remainder of FY2026.",
-    "key_risks": "Revenue is vulnerable to weather\u2011dependent soil\u2011sampling cycles, as prolonged wet conditions can delay projects and reduce volume. Integration of Loamin poses execution risk, including potential disruption to existing client relationships and cost overruns. The company\u2019s cash burn and operating losses require continued access to capital, while reliance on a limited set of large contracts heightens exposure to client\u2011specific downturns."
+    "revenue_commentary": "Group Revenue increased 4.1% to €354.8k for the six months ended 31 December 2025, up from €340.9k in the comparable period [p.1]. The consolidated turnover for the period was €354,813 compared with €340,931 in the prior year [p.5].",
+    "cost_commentary": "Cost of sales for the six months ended 31 December 2025 was €64,861, down from €69,600 in the prior year [p.5]. Administrative expenses were €781,975 for the period, an increase from €677,908 in the previous year [p.5].",
+    "strategic_milestones": "The Company completed the acquisition of Loamin Ltd., a UK‑based geospatial AI business, during the half‑year [p.3]. It raised €1.1 million in new equity funding and completed a Direct Listing on Euronext Access Dublin [p.1][p.3].",
+    "pipeline_outlook": "Senus closed 10 commercial deals in the final two months of 2025 with an estimated combined value of approximately €425,000, and the overall pipeline remains strong with about €700,000 of deals closed across 21 enterprise customers and an additional €500,000 of open pipeline [p.1][p.3]. The Board expressed confidence in the outlook for the balance of FY2026 as the pipeline of financial institution clients continues to expand [p.3].",
+    "key_risks": "Not disclosed in the report."
   },
-  "source_file": "hy2025.pdf"
+  "source_file": "Senus_HY2026_Interim_Results.pdf",
+  "metadata": {
+    "document_title": "Senus_HY2026_Interim_Results",
+    "currency": "EUR",
+    "period_months": 6,
+    "audited": false
+  },
+  "provenance": {
+    "pnl": {
+      "Revenue": 5,
+      "Cost of sales": 5,
+      "Gross Profit": 5,
+      "Distribution costs": 5,
+      "Administrative expenses": 5,
+      "Other operating income": 5,
+      "Group operating loss": 5,
+      "Other gains and losses": 5,
+      "Interest payable": 5,
+      "Loss before taxation": 5,
+      "Tax expense": 5,
+      "Loss for the period": 5
+    },
+    "balance_sheet": {
+      "Goodwill": 5,
+      "Development Costs": 5,
+      "Tangible Assets": 5,
+      "Total Fixed Assets": 5,
+      "Debtors": 5,
+      "Cash and cash equivalents": 5,
+      "Total Current Assets": 5,
+      "Creditors < 1yr": 5,
+      "Contingent consideration": 6,
+      "Net Current Assets": 6,
+      "Total Assets Less Current Liabilities": 6,
+      "Creditors > 1yr": 6,
+      "Net Assets": 6,
+      "Share Capital": 6,
+      "Share Premium": 6,
+      "Retained Earnings": 6,
+      "Equity": 6
+    },
+    "cash_flow": {
+      "Loss for the period": 6,
+      "Interest payable": 5,
+      "Depreciation": 6,
+      "Working capital movements": 6,
+      "Cash used in operations": 6,
+      "Interest paid": 6,
+      "Net cash from operations": 6,
+      "Capex": 7,
+      "Asset disposals": 7,
+      "Net cash from investing": 7,
+      "Loan repayments": 7,
+      "Equity issuance": 7,
+      "Net cash from financing": 7,
+      "Net change in cash": 7,
+      "Cash at start": 7,
+      "Cash at end": 7
+    }
+  }
 }

@@ -19,5 +19,12 @@
     "admin_expense_ratio": 148.02202174216927
   },
   "narrative_insights": {},
-  "source_file": "FY2025 annual results (secondary summary)"
+  "source_file": "FY2025 annual results (secondary summary)",
+  "metadata": {
+    "document_title": "FY2025 annual results (secondary summary)",
+    "currency": "EUR",
+    "period_months": 12,
+    "audited": false
+  },
+  "provenance": {}
 }

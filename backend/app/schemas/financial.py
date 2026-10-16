@@ -1,7 +1,6 @@
 from pydantic import BaseModel, Field, ConfigDict
 from typing import List, Optional
 from datetime import date
-from decimal import Decimal
 
 
 class PeriodBase(BaseModel):
@@ -24,7 +23,7 @@ class PeriodResponse(PeriodBase):
 
 class PnLItemResponse(BaseModel):
     line_item: str
-    value_eur: Decimal
+    value_eur: float
 
     class Config:
         from_attributes = True
@@ -32,7 +31,7 @@ class PnLItemResponse(BaseModel):
 
 class BalanceSheetItemResponse(BaseModel):
     line_item: str
-    value_eur: Decimal
+    value_eur: float
 
     class Config:
         from_attributes = True
@@ -40,7 +39,7 @@ class BalanceSheetItemResponse(BaseModel):
 
 class CashFlowItemResponse(BaseModel):
     line_item: str
-    value_eur: Decimal
+    value_eur: float
 
     class Config:
         from_attributes = True
@@ -48,7 +47,7 @@ class CashFlowItemResponse(BaseModel):
 
 class KPIResponse(BaseModel):
     metric: str
-    value: Decimal
+    value: float
 
     class Config:
         from_attributes = True
@@ -61,16 +60,18 @@ class PeriodDetailResponse(PeriodResponse):
     balance_sheet: List[BalanceSheetItemResponse] = Field(default_factory=list, validation_alias="bs_items")
     cash_flow: List[CashFlowItemResponse] = Field(default_factory=list, validation_alias="cf_items")
     kpis: List[KPIResponse] = Field(default_factory=list, validation_alias="kpis")
+    metadata: Optional[dict] = Field(default=None, validation_alias="doc_meta")
+    provenance: Optional[dict] = Field(default=None, validation_alias="doc_provenance")
 
 
 class FinancialSummary(BaseModel):
     period: PeriodResponse
-    revenue: Optional[Decimal] = None
-    gross_profit: Optional[Decimal] = None
+    revenue: Optional[float] = None
+    gross_profit: Optional[float] = None
     gross_margin: Optional[float] = None
-    operating_loss: Optional[Decimal] = None
-    cash: Optional[Decimal] = None
-    debt: Optional[Decimal] = None
+    operating_loss: Optional[float] = None
+    cash: Optional[float] = None
+    debt: Optional[float] = None
     runway_months: Optional[float] = None
 
 

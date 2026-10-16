@@ -28,9 +28,11 @@ Fixed Assets
 Goodwill 669,550 0
 Development Costs 239,765 0
 Tangible Assets 42,006 65,363
+951,321 65,363
 Current Assets
 Debtors 188,149 211,150
 Cash and cash equivalents 735,189 72,382
+923,339 283,533
 Creditors: amounts falling due within one year -387,105 -90,111
 Contingent consideration -850,000
 Net Current Assets -313,766 193,421
@@ -68,9 +70,10 @@ def test_pnl_loss_items_are_normalised_negative():
     assert result["pnl"]["Loss for the period"] == Decimal("-485144")
 
 
-def test_balance_sheet_derived_subtotals():
+def test_balance_sheet_stated_subtotals():
+    # Prefer the subtotal printed in the statement over a re-sum of components.
     assert result["balance_sheet"]["Total Fixed Assets"] == Decimal("951321")
-    assert result["balance_sheet"]["Total Current Assets"] == Decimal("923338")
+    assert result["balance_sheet"]["Total Current Assets"] == Decimal("923339")
 
 
 def test_balance_sheet_wrapped_and_suffixed_labels():
@@ -93,7 +96,7 @@ def test_comparative_column_reads_prior_period_figures():
 
 def test_comparative_column_subtotals_and_cash():
     assert comparative["balance_sheet"]["Total Fixed Assets"] == Decimal("65363")
-    assert comparative["balance_sheet"]["Total Current Assets"] == Decimal("283532")
+    assert comparative["balance_sheet"]["Total Current Assets"] == Decimal("283533")
     assert comparative["cash_flow"]["Depreciation"] == Decimal("10016")
     assert comparative["cash_flow"]["EBITDA"] == Decimal("-395561")
 

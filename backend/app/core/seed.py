@@ -12,7 +12,7 @@ from typing import Any, Dict, List
 
 from sqlalchemy import delete, func, select
 
-from app.core.database import async_session_maker, init_db
+from app.core.database import async_session_maker
 from app.models.financial import (
     BalanceSheetItem,
     CashFlowItem,
@@ -47,11 +47,15 @@ async def load_extracted(data: Dict[str, Any]) -> str:
         session.add(doc)
         await session.flush()
 
+        metadata = data.get("metadata")
+        provenance = data.get("provenance")
         period = Period(
             label=label,
             start_date=date.fromisoformat(data["start_date"]),
             end_date=date.fromisoformat(data["end_date"]),
             source_doc_id=doc.id,
+            meta_json=json.dumps(metadata) if metadata else None,
+            provenance_json=json.dumps(provenance) if provenance else None,
         )
         session.add(period)
         await session.flush()
@@ -84,10 +88,9 @@ async def load_extracted(data: Dict[str, Any]) -> str:
 async def seed_from_disk(force: bool = False) -> List[str]:
     """Load every JSON in scripts/extracted when the database is empty.
 
-    Set ``force=True`` to reload regardless of existing data.
+    Set ``force=True`` to reload regardless of existing data. The schema is
+    expected to exist already (applied by Alembic).
     """
-    await init_db()
-
     if not EXTRACTED_DIR.exists():
         return []
 

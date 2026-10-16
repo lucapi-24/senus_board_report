@@ -1,3 +1,5 @@
+import json
+from typing import Any, Dict, Optional
 from sqlalchemy import Column, Integer, String, Numeric, Date, DateTime, ForeignKey, UniqueConstraint, Text
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -12,12 +14,31 @@ class Period(Base):
     start_date = Column(Date, nullable=False)
     end_date = Column(Date, nullable=False)
     source_doc_id = Column(Integer, ForeignKey("documents.id"), nullable=True)
+    meta_json = Column(Text, nullable=True)          # JSON: currency, period length, audited…
+    provenance_json = Column(Text, nullable=True)    # JSON: source page per line item
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     pnl_items = relationship("PnLItem", back_populates="period", cascade="all, delete-orphan")
     bs_items = relationship("BalanceSheetItem", back_populates="period", cascade="all, delete-orphan")
     cf_items = relationship("CashFlowItem", back_populates="period", cascade="all, delete-orphan")
     kpis = relationship("KPI", back_populates="period", cascade="all, delete-orphan")
+
+    @staticmethod
+    def _loads(raw: Optional[str]) -> Optional[Dict[str, Any]]:
+        if not raw:
+            return None
+        try:
+            return json.loads(raw)
+        except (TypeError, ValueError):
+            return None
+
+    @property
+    def doc_meta(self) -> Optional[Dict[str, Any]]:
+        return self._loads(self.meta_json)
+
+    @property
+    def doc_provenance(self) -> Optional[Dict[str, Any]]:
+        return self._loads(self.provenance_json)
 
 
 class PnLItem(Base):

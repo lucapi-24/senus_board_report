@@ -74,13 +74,22 @@ KPIs:
 - Cash Runway: {kpis.get('runway_months', 0):.1f} months
 - Current Ratio: {kpis.get('current_ratio', 0):.2f}x (ex-contingent {kpis.get('current_ratio_ex_contingent', 0):.2f}x)
 - Equity Ratio: {kpis.get('equity_ratio', 0):.1f}%
+- Intangibles / Total Assets: {kpis.get('intangibles_ratio', 0):.1f}%
 - ROE: {kpis.get('roe', 0):.1f}%
 - ROCE: {kpis.get('roce', 0):.1f}%
 - DSCR: {('%.2fx' % kpis['dscr']) if 'dscr' in kpis else 'not significant (negative operating cash flow)'}
 
-CONTEXT: Senus is an early-stage Natural Capital SaaS company, listed Dec 2025 on Euronext Access. Strategy: 50% CAGR to 2030. Acquired Loamin (geospatial AI) in H1. €1.1m equity raised. Pre-revenue scaling phase.
+CONTEXT (facts stated in the HY2026 report): Senus is an early-stage Natural Capital SaaS company, listed Dec 2025 on Euronext Access. Stated strategy: 50% CAGR to 2030. Acquired Loamin (geospatial AI) in H1. €1.1m equity raised. Pre-revenue scaling phase.
 
-Return JSON array of insights with: section, insight, confidence (0-1). Focus on: revenue quality, cost discipline, cash runway, strategic milestones, risks."""
+STRICT RULES:
+- Use ONLY the figures and facts in FINANCIAL DATA and CONTEXT above. Never invent events, causes, costs, contracts or forecasts.
+- Every numeric claim must match a figure above; do not restate a figure as text without the number.
+- Do not claim new contracts, partnerships or funding unless explicitly named above.
+- If something material is missing (e.g. no prior-year comparator), say so instead of estimating.
+
+Return JSON array of insights with: section, insight, confidence (0-1). Focus on: revenue quality, cost discipline, cash runway, strategic milestones, risks.
+
+Only use the percentages and ratios listed above. Do not introduce any other calculated ratio or percentage, and do not invent figures."""
 
     import asyncio
 
@@ -92,7 +101,7 @@ Return JSON array of insights with: section, insight, confidence (0-1). Focus on
                 response = await client.chat.completions.create(
                     model=settings.GROQ_MODEL,
                     messages=[{"role": "user", "content": prompt}],
-                    temperature=0.3,
+                    temperature=0.1,
                     max_tokens=800,
                     response_format={"type": "json_object"},
                 )

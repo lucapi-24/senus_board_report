@@ -38,7 +38,7 @@ BS = {
     "Retained Earnings": Decimal("236081"),
     "Equity": Decimal("561081"),
     "Total Fixed Assets": Decimal("951321"),
-    "Total Current Assets": Decimal("923338"),
+    "Total Current Assets": Decimal("923339"),
 }
 
 CF = {
@@ -71,13 +71,14 @@ def kpis():
         ("net_cash", 658715.0),
         ("current_ratio", 0.7464),
         ("current_ratio_ex_contingent", 2.3852),
-        ("total_assets", 1874659.0),
-        ("equity_ratio", 29.9298),
+        ("total_assets", 1874660.0),
+        ("equity_ratio", 29.9297),
         ("intangibles_ratio", 48.5056),
         ("debt_to_equity", 13.6298),
         ("interest_cover", -347.7735),
         ("roce", -75.8764),
         ("roce_annualised", -151.7528),
+        ("roce_ex_contingent", -32.5200),
         ("roe", -86.4659),
     ],
 )

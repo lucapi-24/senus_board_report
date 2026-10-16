@@ -10,12 +10,25 @@ export interface Period {
 
 export interface LineItem {
   line_item: string
-  value_eur: string
+  value_eur: number
 }
 
 export interface KPIValue {
   metric: string
-  value: string
+  value: number
+}
+
+export interface PeriodMeta {
+  document_title?: string | null
+  currency?: string | null
+  period_months?: number | null
+  audited?: boolean | null
+}
+
+export interface Provenance {
+  pnl?: Record<string, number>
+  balance_sheet?: Record<string, number>
+  cash_flow?: Record<string, number>
 }
 
 export interface PeriodDetail extends Period {
@@ -23,16 +36,18 @@ export interface PeriodDetail extends Period {
   balance_sheet: LineItem[]
   cash_flow: LineItem[]
   kpis: KPIValue[]
+  metadata?: PeriodMeta | null
+  provenance?: Provenance | null
 }
 
 export interface FinancialSummary {
   period: Period
-  revenue: string | null
-  gross_profit: string | null
+  revenue: number | null
+  gross_profit: number | null
   gross_margin: number | null
-  operating_loss: string | null
-  cash: string | null
-  debt: string | null
+  operating_loss: number | null
+  cash: number | null
+  debt: number | null
   runway_months: number | null
 }
 
