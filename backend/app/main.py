@@ -1,6 +1,5 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.core.database import init_db
 from app.core.seed import seed_from_disk
 from app.api import financial
 
@@ -24,7 +23,8 @@ app.include_router(financial.router)
 
 @app.on_event("startup")
 async def startup():
-    await init_db()
+    # Schema is applied by Alembic (see docker-compose api command) before the
+    # server starts; here we only ensure the demo data is present.
     await seed_from_disk()
 
 

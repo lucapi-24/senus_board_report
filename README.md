@@ -89,6 +89,15 @@ The frontend is a static Vite build served by nginx, which also reverse-proxies
 | `kpis`                | `period_id`, `metric`, `value`                           | Computed KPIs                    |
 | `documents`           | `filename`, `period_label`, `raw_json`                   | Source provenance + raw payload  |
 
+The schema is versioned with **Alembic**. The API container runs `alembic upgrade head`
+before starting, so the database evolves through committed migrations instead of being
+recreated. To add a schema change:
+
+```bash
+docker compose run --rm api alembic revision --autogenerate -m "describe change"
+docker compose run --rm api alembic upgrade head
+```
+
 ---
 
 ## The AI extraction pipeline
