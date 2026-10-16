@@ -3,28 +3,25 @@
   "start_date": "2024-07-01",
   "end_date": "2025-06-30",
   "pnl": {
-    "Revenue": "836991",
-    "Cost of sales": "188323",
-    "Gross Profit": "648668",
-    "Administrative expenses": "1238931",
-    "Group operating loss": "-590260",
-    "Loss for the period": "-590260"
+    "Revenue": "836991"
   },
   "balance_sheet": {},
   "cash_flow": {},
-  "kpis": {
-    "gross_margin": 77.49999701311006,
-    "operating_margin": -70.5216663022661,
-    "net_margin": -70.5216663022661,
-    "admin_expense_ratio": 148.02202174216927
-  },
+  "kpis": {},
   "narrative_insights": {},
-  "source_file": "FY2025 annual results (secondary summary)",
+  "source_file": "Senus_HY2026_Interim_Results.pdf",
   "metadata": {
-    "document_title": "FY2025 annual results (secondary summary)",
+    "document_title": "FY2025 (revenue only, from the business review narrative)",
     "currency": "EUR",
     "period_months": 12,
-    "audited": false
+    "audited": false,
+    "customers": 138
   },
-  "provenance": {}
+  "provenance": {
+    "pnl": {
+      "Revenue": 9
+    },
+    "balance_sheet": {},
+    "cash_flow": {}
+  }
 }

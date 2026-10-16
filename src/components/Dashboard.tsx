@@ -287,8 +287,8 @@ export function Dashboard({ summary, selected, onSelect }: DashboardProps) {
                 Board, Equity Investors and Credit Providers.
               </p>
               <p className="dashboard__note">
-                HY2026 and its HY2025 comparative are extracted from the source report. FY2025 is a
-                full-year reference from summary data.
+                HY2026 and its HY2025 comparative are extracted from the source report in full.
+                FY2025 is available as revenue only (from the business review narrative).
               </p>
             </div>
             <div className="period-selector" role="tablist">
