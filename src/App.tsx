@@ -25,6 +25,7 @@ function App() {
   const [selected, setSelected] = useState('')
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  const [flaggedCount, setFlaggedCount] = useState(0)
 
   const loadSummary = useCallback(async () => {
     try {
@@ -32,6 +33,20 @@ function App() {
       setSummary(data)
       setSelected((prev) => prev || data[0]?.period.label || '')
       setError('')
+      const latest = data[0]?.period.label || selected
+      if (latest) {
+        try {
+          const detail = await api.periodDetail(latest)
+          const pending = [...detail.pnl, ...detail.balance_sheet, ...detail.cash_flow].filter(
+            (i) => i.review_status === 'flagged',
+          ).length
+          setFlaggedCount(pending)
+        } catch {
+          setFlaggedCount(0)
+        }
+      } else {
+        setFlaggedCount(0)
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to load data')
     } finally {
@@ -89,6 +104,7 @@ function App() {
         }}
         view={view}
         onNavigate={setView}
+        flaggedCount={flaggedCount}
       />
       <main className="app__main">
         {view === 'documents' ? (

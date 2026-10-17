@@ -17,6 +17,7 @@ interface HeaderProps {
   onSelect?: (label: string) => void
   view?: 'overview' | 'documents'
   onNavigate?: (view: 'overview' | 'documents') => void
+  flaggedCount?: number
 }
 
 function DocumentPicker({
@@ -97,7 +98,17 @@ function DocumentPicker({
   )
 }
 
-export function Header({ user, role, onLogout, periods = [], selected, onSelect, view = 'overview', onNavigate }: HeaderProps) {
+export function Header({
+  user,
+  role,
+  onLogout,
+  periods = [],
+  selected,
+  onSelect,
+  view = 'overview',
+  onNavigate,
+  flaggedCount,
+}: HeaderProps) {
   return (
     <header className="senus-header">
       <div className="senus-header__inner">
@@ -122,6 +133,9 @@ export function Header({ user, role, onLogout, periods = [], selected, onSelect,
             onClick={() => onNavigate?.('documents')}
           >
             Documents
+            {flaggedCount !== undefined && flaggedCount > 0 && (
+              <span className="nav-badge">{flaggedCount}</span>
+            )}
           </button>
         </nav>
 

@@ -1496,3 +1496,17 @@
   }
 }
 
+
+.nav-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: 8px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(255, 188, 125, 0.9);
+  color: #1f2a2f;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.4;
+}
