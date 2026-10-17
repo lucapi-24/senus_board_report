@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.core.seed import seed_from_disk
-from app.api import financial, documents
+from app.core.seed import seed_from_disk, seed_users
+from app.api import financial, documents, auth
 
 
 app = FastAPI(
@@ -18,6 +18,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.include_router(auth.router)
 app.include_router(financial.router)
 app.include_router(documents.router)
 
@@ -26,6 +27,7 @@ app.include_router(documents.router)
 async def startup():
     # Schema is applied by Alembic (see docker-compose api command) before the
     # server starts; here we only ensure the demo data is present.
+    await seed_users()
     await seed_from_disk()
 
 

@@ -45,7 +45,8 @@ function StatusBadge({ status }: { status: string }) {
   return <span className={`status-badge status-badge--${status}`}>{STATUS_LABELS[status] ?? status}</span>
 }
 
-export function Ingestion({ onDataChanged }: { onDataChanged?: () => void }) {
+export function Ingestion({ role, onDataChanged }: { role?: string; onDataChanged?: () => void }) {
+  const isAdmin = role === 'admin'
   const [documents, setDocuments] = useState<DocumentSummary[]>([])
   const [detail, setDetail] = useState<DocumentDetail | null>(null)
   const [period, setPeriod] = useState<PeriodDetail | null>(null)
@@ -184,6 +185,14 @@ export function Ingestion({ onDataChanged }: { onDataChanged?: () => void }) {
 
       {error && <div className="state state--error ingest__error">{error}</div>}
 
+      {!isAdmin && (
+        <div className="callout callout--readonly">
+          Read-only view — your account has viewer access. Sign in as an administrator to upload,
+          review or publish documents.
+        </div>
+      )}
+
+      {isAdmin && (
       <section className="panel">
         <h2 className="panel__title">
           <FileUp size={18} aria-hidden="true" /> Upload a document
@@ -232,6 +241,7 @@ export function Ingestion({ onDataChanged }: { onDataChanged?: () => void }) {
           </button>
         </div>
       </section>
+      )}
 
       <section className="panel">
         <h2 className="panel__title">Documents</h2>
@@ -250,7 +260,7 @@ export function Ingestion({ onDataChanged }: { onDataChanged?: () => void }) {
                 </button>
                 <StatusBadge status={doc.status} />
                 <div className="doc-row__actions">
-                  {(doc.status === 'uploaded' || doc.status === 'error') && (
+                  {isAdmin && (doc.status === 'uploaded' || doc.status === 'error') && (
                     <button
                       type="button"
                       className="btn btn--small"
@@ -283,14 +293,16 @@ export function Ingestion({ onDataChanged }: { onDataChanged?: () => void }) {
             <div className="review__summary">
               <span className="pill pill--ok">{detail.review.summary.matched} matched</span>
               <span className="pill pill--warn">{pending} to review</span>
-              <button
-                type="button"
-                className="btn btn--primary btn--small"
-                disabled={busy === 'publish' || detail.status === 'published'}
-                onClick={handlePublish}
-              >
-                {detail.status === 'published' ? 'Published' : 'Publish'}
-              </button>
+              {isAdmin && (
+                <button
+                  type="button"
+                  className="btn btn--primary btn--small"
+                  disabled={busy === 'publish' || detail.status === 'published'}
+                  onClick={handlePublish}
+                >
+                  {detail.status === 'published' ? 'Published' : 'Publish'}
+                </button>
+              )}
             </div>
           </div>
 
@@ -341,7 +353,7 @@ export function Ingestion({ onDataChanged }: { onDataChanged?: () => void }) {
                           <td className="num small">{item.confidence.toFixed(2)}</td>
                           <td className="small muted">{item.page ?? '—'}</td>
                           <td className="review-table__actions">
-                            {flagged && (
+                            {isAdmin && flagged && (
                               <>
                                 <button
                                   type="button"

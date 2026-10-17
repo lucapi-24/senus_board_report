@@ -1,12 +1,13 @@
-from fastapi import APIRouter, Depends, Header, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
 from sqlalchemy.orm import selectinload
-from typing import List, Optional
+from typing import List
 from decimal import Decimal
 import json
 
 from app.core.database import get_db
+from app.core.security import get_current_user, require_admin
 from app.models.financial import (
     Period,
     PnLItem,
@@ -14,6 +15,7 @@ from app.models.financial import (
     CashFlowItem,
     KPI,
     Document,
+    User,
     Validation,
     AuditLog,
 )
@@ -39,13 +41,20 @@ ITEM_MODELS = {"pnl": PnLItem, "balance_sheet": BalanceSheetItem, "cash_flow": C
 
 
 @router.get("/periods", response_model=List[PeriodResponse])
-async def list_periods(db: AsyncSession = Depends(get_db)):
+async def list_periods(
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
     result = await db.execute(select(Period).order_by(Period.end_date.desc()))
     return result.scalars().all()
 
 
 @router.get("/periods/{period_label}", response_model=PeriodDetailResponse)
-async def get_period_detail(period_label: str, db: AsyncSession = Depends(get_db)):
+async def get_period_detail(
+    period_label: str,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
     result = await db.execute(
         select(Period)
         .options(
@@ -63,7 +72,10 @@ async def get_period_detail(period_label: str, db: AsyncSession = Depends(get_db
 
 
 @router.get("/summary", response_model=List[FinancialSummary])
-async def get_financial_summary(db: AsyncSession = Depends(get_db)):
+async def get_financial_summary(
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
     """Get summary metrics for all periods for dashboard overview"""
     result = await db.execute(
         select(Period)
@@ -107,7 +119,11 @@ async def get_financial_summary(db: AsyncSession = Depends(get_db)):
 
 
 @router.get("/kpis/{period_label}", response_model=List[KPIResponse])
-async def get_kpis(period_label: str, db: AsyncSession = Depends(get_db)):
+async def get_kpis(
+    period_label: str,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
     result = await db.execute(
         select(KPI)
         .join(Period)
@@ -117,14 +133,22 @@ async def get_kpis(period_label: str, db: AsyncSession = Depends(get_db)):
 
 
 @router.get("/insights/{period_label}", response_model=List[AIInsight])
-async def get_ai_insights(period_label: str, db: AsyncSession = Depends(get_db)):
+async def get_ai_insights(
+    period_label: str,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
     """Get AI-generated insights for a period"""
     from app.services.ai_insights import generate_insights
     return await generate_insights(period_label, db)
 
 
 @router.get("/validations/{period_label}", response_model=List[ValidationResponse])
-async def get_validations(period_label: str, db: AsyncSession = Depends(get_db)):
+async def get_validations(
+    period_label: str,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
     """Get the automated validation issues recorded for a period."""
     period = (
         await db.execute(select(Period).where(Period.label == period_label))
@@ -152,8 +176,8 @@ def _item_snapshot(item) -> dict:
 async def update_item(
     period_label: str,
     payload: ItemUpdate,
-    x_user_email: Optional[str] = Header(default=None),
     db: AsyncSession = Depends(get_db),
+    user: User = Depends(require_admin),
 ):
     """Confirm a flagged figure as-is, or correct it to a human-entered value."""
     model = ITEM_MODELS.get(payload.statement)
@@ -189,7 +213,7 @@ async def update_item(
 
     db.add(
         AuditLog(
-            user_email=x_user_email or "local@senus",
+            user_email=user.email,
             action=payload.action,
             entity=payload.statement,
             entity_id=None,
@@ -204,7 +228,11 @@ async def update_item(
 
 
 @router.post("/periods/{period_label}/publish", response_model=PeriodResponse)
-async def publish_period(period_label: str, db: AsyncSession = Depends(get_db)):
+async def publish_period(
+    period_label: str,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require_admin),
+):
     """Publish a reviewed period by moving its source document to 'published'."""
     period = (
         await db.execute(select(Period).where(Period.label == period_label))
@@ -215,5 +243,13 @@ async def publish_period(period_label: str, db: AsyncSession = Depends(get_db)):
     doc = await db.get(Document, period.source_doc_id) if period.source_doc_id else None
     if doc is not None and doc.status != lifecycle.PUBLISHED:
         doc.status = lifecycle.advance(doc.status, lifecycle.PUBLISHED)
-        await db.commit()
+    db.add(
+        AuditLog(
+            user_email=user.email,
+            action="publish",
+            entity="period",
+            entity_id=period.id,
+        )
+    )
+    await db.commit()
     return period

@@ -1,19 +1,25 @@
 import { useCallback, useEffect, useState } from 'react'
 import './App.css'
 import { RefreshCw } from 'lucide-react'
-import { api, type FinancialSummary } from './api/client'
+import {
+  api,
+  AUTH_EXPIRED_EVENT,
+  clearAuth,
+  getStoredUser,
+  setAuth,
+  type AuthUser,
+  type FinancialSummary,
+} from './api/client'
 import { Header } from './components/Header'
 import { Dashboard } from './components/Dashboard'
 import { Ingestion } from './components/Ingestion'
 import { Footer } from './components/Footer'
 import { Login } from './components/Login'
 
-const STORAGE_KEY = 'senus-board-user'
-
 type View = 'overview' | 'documents'
 
 function App() {
-  const [user, setUser] = useState<string | null>(() => localStorage.getItem(STORAGE_KEY))
+  const [user, setUser] = useState<AuthUser | null>(() => getStoredUser())
   const [view, setView] = useState<View>('overview')
   const [summary, setSummary] = useState<FinancialSummary[]>([])
   const [selected, setSelected] = useState('')
@@ -44,15 +50,26 @@ function App() {
     }
   }, [user, loadSummary])
 
-  const handleLogin = (email: string) => {
-    localStorage.setItem(STORAGE_KEY, email)
-    setUser(email)
+  const handleLogin = async (email: string, password: string) => {
+    const result = await api.login(email, password)
+    const authUser: AuthUser = { email: result.email, role: result.role }
+    setAuth(result.access_token, authUser)
+    setLoading(true)
+    setUser(authUser)
   }
 
-  const handleLogout = () => {
-    localStorage.removeItem(STORAGE_KEY)
+  const handleLogout = useCallback(() => {
+    clearAuth()
     setUser(null)
-  }
+    setSummary([])
+    setSelected('')
+    setLoading(true)
+  }, [])
+
+  useEffect(() => {
+    window.addEventListener(AUTH_EXPIRED_EVENT, handleLogout)
+    return () => window.removeEventListener(AUTH_EXPIRED_EVENT, handleLogout)
+  }, [handleLogout])
 
   if (!user) {
     return <Login onLogin={handleLogin} />
@@ -61,7 +78,8 @@ function App() {
   return (
     <div className="app">
       <Header
-        user={user}
+        user={user.email}
+        role={user.role}
         onLogout={handleLogout}
         periods={summary.map((s) => s.period)}
         selected={selected}
@@ -74,7 +92,7 @@ function App() {
       />
       <main className="app__main">
         {view === 'documents' ? (
-          <Ingestion onDataChanged={loadSummary} />
+          <Ingestion role={user.role} onDataChanged={loadSummary} />
         ) : loading ? (
           <div className="state">
             <RefreshCw className="spin" size={28} />

@@ -13,6 +13,7 @@ from typing import Any, Dict, List
 from sqlalchemy import delete, func, select
 
 from app.core.database import async_session_maker
+from app.core.security import hash_password
 from app.models.financial import (
     BalanceSheetItem,
     CashFlowItem,
@@ -20,11 +21,41 @@ from app.models.financial import (
     KPI,
     PnLItem,
     Period,
+    User,
     Validation,
 )
 from app.services.validation import validate_period
 
 EXTRACTED_DIR = Path(__file__).resolve().parents[2] / "scripts" / "extracted"
+
+# Demo accounts seeded on first boot. Password is intentionally simple; this is
+# a local assessment environment, not a production deployment.
+DEMO_USERS = [
+    {"email": "board@senus.com", "role": "admin", "password": "senus123"},
+    {"email": "viewer@senus.com", "role": "viewer", "password": "senus123"},
+]
+
+
+async def seed_users() -> List[str]:
+    """Create the demo admin/viewer accounts if they don't exist yet."""
+    created: List[str] = []
+    async with async_session_maker() as session:
+        for spec in DEMO_USERS:
+            exists = (
+                await session.execute(select(User).where(User.email == spec["email"]))
+            ).scalars().first()
+            if exists:
+                continue
+            session.add(
+                User(
+                    email=spec["email"],
+                    role=spec["role"],
+                    hashed_password=hash_password(spec["password"]),
+                )
+            )
+            created.append(spec["email"])
+        await session.commit()
+    return created
 
 
 async def load_extracted(data: Dict[str, Any]) -> str:

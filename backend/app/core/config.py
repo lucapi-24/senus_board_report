@@ -10,6 +10,8 @@ class Settings(BaseSettings):
     GROQ_MODEL: str = "openai/gpt-oss-120b"
     SQL_ECHO: bool = False
     UPLOAD_DIR: str = "data/uploads"
+    SECRET_KEY: str = "dev-secret-change-me"
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 480
 
     @field_validator("DATABASE_URL")
     @classmethod

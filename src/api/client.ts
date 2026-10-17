@@ -1,5 +1,55 @@
 const API_BASE = import.meta.env.VITE_API_URL ?? ''
 
+const TOKEN_KEY = 'senus-board-token'
+const USER_KEY = 'senus-board-user'
+
+export interface AuthUser {
+  email: string
+  role: string
+}
+
+export function getToken(): string | null {
+  return localStorage.getItem(TOKEN_KEY)
+}
+
+export function getStoredUser(): AuthUser | null {
+  const raw = localStorage.getItem(USER_KEY)
+  if (!raw) return null
+  try {
+    const parsed = JSON.parse(raw) as AuthUser
+    if (parsed && typeof parsed.email === 'string' && typeof parsed.role === 'string') return parsed
+  } catch {
+    return null
+  }
+  return null
+}
+
+export function setAuth(token: string, user: AuthUser): void {
+  localStorage.setItem(TOKEN_KEY, token)
+  localStorage.setItem(USER_KEY, JSON.stringify(user))
+}
+
+export function clearAuth(): void {
+  localStorage.removeItem(TOKEN_KEY)
+  localStorage.removeItem(USER_KEY)
+}
+
+export const AUTH_EXPIRED_EVENT = 'senus-auth-expired'
+
+function authHeaders(base?: Record<string, string>): Record<string, string> {
+  const headers: Record<string, string> = { ...(base ?? {}) }
+  const token = getToken()
+  if (token) headers.Authorization = `Bearer ${token}`
+  return headers
+}
+
+function onUnauthorized(status: number): void {
+  if (status === 401) {
+    clearAuth()
+    window.dispatchEvent(new Event(AUTH_EXPIRED_EVENT))
+  }
+}
+
 export interface Period {
   id: number
   label: string
@@ -99,8 +149,9 @@ export interface DocumentDetail extends DocumentSummary {
 }
 
 async function get<T>(path: string): Promise<T> {
-  const res = await fetch(`${API_BASE}${path}`)
+  const res = await fetch(`${API_BASE}${path}`, { headers: authHeaders() })
   if (!res.ok) {
+    onUnauthorized(res.status)
     throw new Error(`Request failed: ${res.status} ${res.statusText}`)
   }
   return (await res.json()) as T
@@ -109,10 +160,11 @@ async function get<T>(path: string): Promise<T> {
 async function send<T>(path: string, method: string, body?: unknown): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, {
     method,
-    headers: body === undefined ? undefined : { 'Content-Type': 'application/json' },
+    headers: authHeaders(body === undefined ? undefined : { 'Content-Type': 'application/json' }),
     body: body === undefined ? undefined : JSON.stringify(body),
   })
   if (!res.ok) {
+    onUnauthorized(res.status)
     const detail = await res.text()
     throw new Error(detail || `Request failed: ${res.status} ${res.statusText}`)
   }
@@ -127,6 +179,17 @@ export interface UploadFields {
 }
 
 export const api = {
+  login: async (email: string, password: string): Promise<{ access_token: string; role: string; email: string }> => {
+    const body = new URLSearchParams({ username: email, password })
+    const res = await fetch(`${API_BASE}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body,
+    })
+    if (!res.ok) throw new Error('Incorrect email or password')
+    return (await res.json()) as { access_token: string; role: string; email: string }
+  },
+  me: () => get<AuthUser>('/api/auth/me'),
   periods: () => get<Period[]>('/api/periods'),
   summary: () => get<FinancialSummary[]>('/api/summary'),
   periodDetail: (label: string) => get<PeriodDetail>(`/api/periods/${label}`),
@@ -141,8 +204,15 @@ export const api = {
     form.append('start_date', fields.start_date)
     form.append('end_date', fields.end_date)
     if (fields.doc_type) form.append('doc_type', fields.doc_type)
-    const res = await fetch(`${API_BASE}/api/documents`, { method: 'POST', body: form })
-    if (!res.ok) throw new Error((await res.text()) || 'Upload failed')
+    const res = await fetch(`${API_BASE}/api/documents`, {
+      method: 'POST',
+      headers: authHeaders(),
+      body: form,
+    })
+    if (!res.ok) {
+      onUnauthorized(res.status)
+      throw new Error((await res.text()) || 'Upload failed')
+    }
     return (await res.json()) as DocumentSummary
   },
   processDocument: (id: number) => send<DocumentSummary>(`/api/documents/${id}/process`, 'POST'),

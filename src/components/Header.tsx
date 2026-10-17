@@ -10,6 +10,7 @@ interface HeaderPeriod {
 
 interface HeaderProps {
   user?: string
+  role?: string
   onLogout?: () => void
   periods?: HeaderPeriod[]
   selected?: string
@@ -96,7 +97,7 @@ function DocumentPicker({
   )
 }
 
-export function Header({ user, onLogout, periods = [], selected, onSelect, view = 'overview', onNavigate }: HeaderProps) {
+export function Header({ user, role, onLogout, periods = [], selected, onSelect, view = 'overview', onNavigate }: HeaderProps) {
   return (
     <header className="senus-header">
       <div className="senus-header__inner">
@@ -126,6 +127,7 @@ export function Header({ user, onLogout, periods = [], selected, onSelect, view 
 
         <div className="senus-header__actions">
           {user && <span className="senus-header__user">{user}</span>}
+          {role && <span className={`role-badge role-badge--${role}`}>{role}</span>}
           <button type="button" className="btn senus-header__login" onClick={onLogout}>
             {user ? 'Sign out' : 'Login'}
           </button>

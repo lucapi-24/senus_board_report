@@ -10,7 +10,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.database import get_db
-from app.models.financial import Document
+from app.core.security import get_current_user, require_admin
+from app.models.financial import AuditLog, Document, User
 from app.schemas.documents import DocumentDetailResponse, DocumentResponse
 from app.services import lifecycle
 from app.services.ingest import ingest_document
@@ -32,6 +33,7 @@ async def upload_document(
     end_date: date = Form(...),
     doc_type: Optional[str] = Form(None),
     db: AsyncSession = Depends(get_db),
+    user: User = Depends(require_admin),
 ):
     """Store an uploaded PDF and register it as a document awaiting processing."""
     original = Path(file.filename or "upload.pdf").name
@@ -52,19 +54,36 @@ async def upload_document(
         status=lifecycle.UPLOADED,
     )
     db.add(doc)
+    await db.flush()
+    db.add(
+        AuditLog(
+            user_email=user.email,
+            action="upload",
+            entity="document",
+            entity_id=doc.id,
+            after_json=json.dumps({"filename": original, "period_label": period_label}),
+        )
+    )
     await db.commit()
     await db.refresh(doc)
     return _reload(doc)
 
 
 @router.get("", response_model=List[DocumentResponse])
-async def list_documents(db: AsyncSession = Depends(get_db)):
+async def list_documents(
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
     result = await db.execute(select(Document).order_by(Document.uploaded_at.desc()))
     return list(result.scalars().all())
 
 
 @router.get("/{document_id}", response_model=DocumentDetailResponse)
-async def get_document(document_id: int, db: AsyncSession = Depends(get_db)):
+async def get_document(
+    document_id: int,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
     doc = await db.get(Document, document_id)
     if doc is None:
         raise HTTPException(status_code=404, detail="Document not found")
@@ -78,7 +97,11 @@ async def get_document(document_id: int, db: AsyncSession = Depends(get_db)):
 
 
 @router.post("/{document_id}/process", response_model=DocumentResponse)
-async def process_document(document_id: int, db: AsyncSession = Depends(get_db)):
+async def process_document(
+    document_id: int,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require_admin),
+):
     """Run the hybrid extraction and persist the resulting period for review."""
     try:
         await ingest_document(document_id, db)
@@ -86,12 +109,20 @@ async def process_document(document_id: int, db: AsyncSession = Depends(get_db))
         raise HTTPException(status_code=409, detail=str(exc))
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
+    db.add(
+        AuditLog(user_email=user.email, action="process", entity="document", entity_id=document_id)
+    )
+    await db.commit()
     doc = await db.get(Document, document_id)
     return _reload(doc)
 
 
 @router.post("/{document_id}/publish", response_model=DocumentResponse)
-async def publish_document(document_id: int, db: AsyncSession = Depends(get_db)):
+async def publish_document(
+    document_id: int,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require_admin),
+):
     """Mark a processed document (and its period) as published."""
     doc = await db.get(Document, document_id)
     if doc is None:
@@ -100,6 +131,9 @@ async def publish_document(document_id: int, db: AsyncSession = Depends(get_db))
         doc.status = lifecycle.advance(doc.status, lifecycle.PUBLISHED)
     except lifecycle.InvalidTransition as exc:
         raise HTTPException(status_code=409, detail=str(exc))
+    db.add(
+        AuditLog(user_email=user.email, action="publish", entity="document", entity_id=document_id)
+    )
     await db.commit()
     await db.refresh(doc)
     return _reload(doc)

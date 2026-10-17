@@ -3,15 +3,16 @@ import { Lock, Mail, ArrowRight } from 'lucide-react'
 import { Logo } from './Logo'
 
 interface LoginProps {
-  onLogin: (email: string) => void
+  onLogin: (email: string, password: string) => Promise<void>
 }
 
 export function Login({ onLogin }: LoginProps) {
   const [email, setEmail] = useState('board@senus.com')
-  const [password, setPassword] = useState('')
+  const [password, setPassword] = useState('senus123')
   const [error, setError] = useState('')
+  const [busy, setBusy] = useState(false)
 
-  const submit = (e: React.FormEvent) => {
+  const submit = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!email.includes('@')) {
       setError('Please enter a valid email address.')
@@ -22,7 +23,14 @@ export function Login({ onLogin }: LoginProps) {
       return
     }
     setError('')
-    onLogin(email)
+    setBusy(true)
+    try {
+      await onLogin(email, password)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Sign in failed')
+    } finally {
+      setBusy(false)
+    }
   }
 
   return (
@@ -67,13 +75,14 @@ export function Login({ onLogin }: LoginProps) {
 
           {error && <div className="login__error">{error}</div>}
 
-          <button className="btn login__submit" type="submit">
-            Sign in <ArrowRight size={18} />
+          <button className="btn login__submit" type="submit" disabled={busy}>
+            {busy ? 'Signing in…' : 'Sign in'} <ArrowRight size={18} />
           </button>
         </form>
 
         <p className="login__note">
-          Demo environment — any credentials will sign you in.
+          Demo accounts — <strong>board@senus.com</strong> (admin) or{' '}
+          <strong>viewer@senus.com</strong> (read-only), password <strong>senus123</strong>.
         </p>
       </div>
 
