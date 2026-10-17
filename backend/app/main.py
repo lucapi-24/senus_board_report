@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.core.seed import seed_from_disk, seed_users
-from app.api import financial, documents, auth
+from app.api import financial, documents, auth, metrics
 
 
 app = FastAPI(
@@ -21,6 +21,7 @@ app.add_middleware(
 app.include_router(auth.router)
 app.include_router(financial.router)
 app.include_router(documents.router)
+app.include_router(metrics.router)
 
 
 @app.on_event("startup")

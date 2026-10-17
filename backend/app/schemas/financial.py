@@ -53,11 +53,12 @@ class ItemUpdate(BaseModel):
 
 
 class KPIResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     metric: str
     value: float
-
-    class Config:
-        from_attributes = True
+    kind: Optional[str] = None
+    note: Optional[str] = None
 
 
 class PeriodDetailResponse(PeriodResponse):
