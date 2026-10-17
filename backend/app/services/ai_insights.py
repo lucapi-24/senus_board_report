@@ -79,17 +79,23 @@ KPIs:
 - ROCE: {kpis.get('roce', 0):.1f}%
 - DSCR: {('%.2fx' % kpis['dscr']) if 'dscr' in kpis else 'not significant (negative operating cash flow)'}
 
-CONTEXT (facts stated in the HY2026 report): Senus is an early-stage Natural Capital SaaS company, listed Dec 2025 on Euronext Access. Stated strategy: 50% CAGR to 2030. Acquired Loamin (geospatial AI) in H1. €1.1m equity raised. Pre-revenue scaling phase.
+    CONTEXT: You are analyzing financials for period {period_label} (6 months).
+             Do not reference events from other periods unless they are explicitly
+             documented for {period_label}. Do not state long-term targets
+             (e.g. CAGR) unless explicitly stated in the data for {period_label}.
 
-STRICT RULES:
-- Use ONLY the figures and facts in FINANCIAL DATA and CONTEXT above. Never invent events, causes, costs, contracts or forecasts.
-- Every numeric claim must match a figure above; do not restate a figure as text without the number.
-- Do not claim new contracts, partnerships or funding unless explicitly named above.
-- If something material is missing (e.g. no prior-year comparator), say so instead of estimating.
+    STRICT RULES:
+    - Use ONLY the figures and facts in FINANCIAL DATA and CONTEXT above. Never invent events, causes, costs, contracts or forecasts.
+    - Every numeric claim must match a figure above; do not restate a figure as text without the number.
+    - Do not claim new contracts, partnerships or funding unless explicitly named above.
+    - If something material is missing (e.g. no prior-year comparator), say so instead of estimating.
+    - This is a 6-month period ({period_label}); do not conflate with full-year or other periods.
+    - Do not contradict computed KPIs (e.g. if DSCR is marked "not significant", never state a DSCR value or imply positive debt service coverage).
+    - Prefer descriptive statements over speculative recommendations; do not invent causes/costs.
 
-Return JSON array of insights with: section, insight, confidence (0-1). Focus on: revenue quality, cost discipline, cash runway, strategic milestones, risks.
+    Return JSON array of insights with: section, insight, confidence (0-1). Focus on: revenue quality, cost discipline, cash runway, strategic milestones, risks.
 
-Only use the percentages and ratios listed above. Do not introduce any other calculated ratio or percentage, and do not invent figures."""
+    Only use the percentages and ratios listed above. Do not introduce any other calculated ratio or percentage, and do not invent figures."""
 
     import asyncio
 
