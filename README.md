@@ -263,3 +263,19 @@ npm run build     # type-check + production build
 | `GROQ_API_KEY` | yes (AI) | Enables narrative + on-demand insights        |
 | `GROQ_MODEL`   | no       | Defaults to `openai/gpt-oss-120b`             |
 | `SQL_ECHO`     | no       | Log all SQL statements (default `false`)      |
+
+## Auth, roles and audit
+
+- Login with demo credentials: **board@senus.com / senus123** (admin, can upload/process/review/publish) or **viewer@senus.com / senus123** (read-only).
+- All /api endpoints require JWT (Bearer token). Write operations require admin role.
+- Every confirm/correct/upload/process/publish is logged in udit_log with user email.
+- Header shows the logged-in user and role; the Documents tab shows a badge when items require review (eview_status = flagged).
+
+## Metrics catalogue
+
+GET /api/metrics/catalog returns metadata for all derived KPIs (label, unit, category, direction, formula, note). The computation lives in ackend/scripts/extract_pdf.py (single source of truth).
+
+## AI insights verification
+
+See VERIFICATION_REPORT.md for ground-truth comparison against computed KPIs and the minimal fix to prevent cross-period contamination in the AI prompt.
+
