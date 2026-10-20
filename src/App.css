@@ -683,6 +683,7 @@
   background: var(--senus-surface);
   border: 0.063rem solid var(--senus-border);
   border-radius: var(--radius);
+  margin: 0.5 rem;
   padding: 1.5rem;
   box-shadow: var(--shadow-card);
 }
@@ -1305,8 +1306,14 @@
   }
 
   .ingestion .container:not(.ingestion__head > .container) {
-    width: min(68.75rem, 100% - 2rem);
+    width: min(1280px, 100% - 2rem);
     margin: 0 auto;
+  }
+
+  .ingestion > .container {
+    display: flex;
+    flex-direction: column;
+    gap: 1.5rem;
   }
 
   .panel__title {
