@@ -157,7 +157,7 @@ async function get<T>(path: string): Promise<T> {
   return (await res.json()) as T
 }
 
-async function send<T>(path: string, method: string, body?: unknown): Promise<T> {
+async function send<T>(path: string, method: string, body?: unknown): Promise<T | null> {
   const res = await fetch(`${API_BASE}${path}`, {
     method,
     headers: authHeaders(body === undefined ? undefined : { 'Content-Type': 'application/json' }),
@@ -168,6 +168,7 @@ async function send<T>(path: string, method: string, body?: unknown): Promise<T>
     const detail = await res.text()
     throw new Error(detail || `Request failed: ${res.status} ${res.statusText}`)
   }
+  if (res.status === 204 || res.status === 205) return null as T | null
   return (await res.json()) as T
 }
 
