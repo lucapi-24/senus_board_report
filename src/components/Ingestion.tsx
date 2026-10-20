@@ -209,6 +209,7 @@ export function Ingestion({ role, onDataChanged }: { role?: string; onDataChange
               className="file-input"
               onChange={(e) => setFile(e.target.files?.[0] ?? null)}
             />
+            {file && <span className="muted small">{file.name}</span>}
           </label>
           <label className="field">
             <span>Period label</span>
