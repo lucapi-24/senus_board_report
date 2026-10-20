@@ -59,6 +59,13 @@ export function Ingestion({ role, onDataChanged }: { role?: string; onDataChange
   const [endDate, setEndDate] = useState('')
   const [docType, setDocType] = useState('interim_results')
 
+  // Inline edit of document metadata
+  const [editingDocId, setEditingDocId] = useState<number | null>(null)
+  const [editLabel, setEditLabel] = useState('')
+  const [editStart, setEditStart] = useState('')
+  const [editEnd, setEditEnd] = useState('')
+  const [editDocType, setEditDocType] = useState('interim_results')
+
   const loadDocuments = async () => {
     const docs = await api.documents()
     setDocuments(docs)
@@ -177,6 +184,34 @@ export function Ingestion({ role, onDataChanged }: { role?: string; onDataChange
     })
   }
 
+  const handleEditSave = async (id: number) => {
+    await run(`edit-${id}`, async () => {
+      await api.updateDocument(id, {
+        period_label: editLabel || undefined,
+        start_date: editStart || undefined,
+        end_date: editEnd || undefined,
+        doc_type: editDocType || undefined,
+      })
+      setEditingDocId(null)
+      await loadDocuments()
+      if (detail?.id === id) {
+        await openDocument(id)
+      }
+      onDataChanged?.()
+    })
+  }
+
+  const handleEditCancel = () => {
+    setEditingDocId(null)
+    const doc = documents.find((d) => d.id === id)
+    if (doc) {
+      setEditLabel(doc.period_label ?? '')
+      setEditStart(doc.period_start ?? '')
+      setEditEnd(doc.period_end ?? '')
+      setEditDocType(doc.doc_type ?? 'interim_results')
+    }
+  }
+
   const pending = period
     ? [...period.pnl, ...period.balance_sheet, ...period.cash_flow].filter(
         (i) => i.review_status === 'flagged',
@@ -275,7 +310,12 @@ export function Ingestion({ role, onDataChanged }: { role?: string; onDataChange
           ) : (
             <ul className="doc-list">
               {documents.map((doc) => (
-                <li key={doc.id} className={`doc-row ${detail?.id === doc.id ? 'is-selected' : ''}`}>
+                <li
+                  key={doc.id}
+                  className={`doc-row ${detail?.id === doc.id ? 'is-selected' : ''} ${
+                    editingDocId === doc.id ? 'is-editing' : ''
+                  }`}
+                >
                   <button type="button" className="doc-row__main" onClick={() => openDocument(doc.id)}>
                     <strong>{doc.period_label ?? doc.filename}</strong>
                     <span className="muted">
@@ -285,36 +325,99 @@ export function Ingestion({ role, onDataChanged }: { role?: string; onDataChange
                   </button>
                   <StatusBadge status={doc.status} />
                   <div className="doc-row__actions">
-                    {isAdmin && (doc.status === 'uploaded' || doc.status === 'error') && (
-                      <button
-                        type="button"
-                        className="btn btn--small"
-                        disabled={busy === 'process'}
-                        onClick={() => handleProcess(doc.id)}
-                      >
-                        Process
-                      </button>
+                    {editingDocId === doc.id ? (
+                      <>
+                        <label className="field" style={{ margin: 0, flex: 1, minWidth: 120 }}>
+                          <span>Period</span>
+                          <input
+                            type="text"
+                            value={editLabel}
+                            onChange={(e) => setEditLabel(e.target.value)}
+                            placeholder="HY2026"
+                          />
+                        </label>
+                        <label className="field" style={{ margin: 0, flex: 1, minWidth: 110 }}>
+                          <span>Start</span>
+                          <input
+                            type="date"
+                            value={editStart}
+                            onChange={(e) => setEditStart(e.target.value)}
+                          />
+                        </label>
+                        <label className="field" style={{ margin: 0, flex: 1, minWidth: 110 }}>
+                          <span>End</span>
+                          <input
+                            type="date"
+                            value={editEnd}
+                            onChange={(e) => setEditEnd(e.target.value)}
+                          />
+                        </label>
+                        <button
+                          type="button"
+                          className="btn btn--small btn--primary"
+                          disabled={busy.startsWith('edit-')}
+                          onClick={() => handleEditSave(doc.id)}
+                        >
+                          Save
+                        </button>
+                        <button
+                          type="button"
+                          className="btn btn--small"
+                          onClick={handleEditCancel}
+                        >
+                          Cancel
+                        </button>
+                      </>
+                    ) : (
+                      <>
+                        {isAdmin && (doc.status === 'uploaded' || doc.status === 'error') && (
+                          <button
+                            type="button"
+                            className="btn btn--small"
+                            disabled={busy === 'process'}
+                            onClick={() => handleProcess(doc.id)}
+                          >
+                            Process
+                          </button>
+                        )}
+                        {(doc.status === 'extracted' || doc.status === 'in_review' || doc.status === 'published') && (
+                          <button type="button" className="btn btn--small" onClick={() => openDocument(doc.id)}>
+                            Review
+                          </button>
+                        )}
+                        {doc.status === 'processing' && (
+                          <button type="button" className="btn btn--small" disabled>
+                            Processing…
+                          </button>
+                        )}
+                        {isAdmin && doc.status !== 'published' && (
+                          <button
+                            type="button"
+                            className="btn btn--small btn--outline"
+                            onClick={() => {
+                              setEditingDocId(doc.id)
+                              setEditLabel(doc.period_label ?? '')
+                              setEditStart(doc.period_start ?? '')
+                              setEditEnd(doc.period_end ?? '')
+                              setEditDocType(doc.doc_type ?? 'interim_results')
+                            }}
+                          >
+                            Edit details
+                          </button>
+                        )}
+                        {isAdmin && doc.status !== 'published' && (
+                          <button
+                            type="button"
+                            className="btn btn--small btn--danger"
+                            disabled={busy.startsWith('delete-')}
+                            onClick={() => handleDelete(doc.id)}
+                          >
+                            Delete
+                          </button>
+                        )}
+                      </>
                     )}
-                    {(doc.status === 'extracted' || doc.status === 'in_review' || doc.status === 'published') && (
-                      <button type="button" className="btn btn--small" onClick={() => openDocument(doc.id)}>
-                        Review
-                      </button>
-                    )}
-                    {doc.status === 'processing' && (
-                      <button type="button" className="btn btn--small" disabled>
-                        Processing…
-                      </button>
-                    )}
-                    {isAdmin && doc.status !== 'published' && (
-                      <button
-                        type="button"
-                        className="btn btn--small btn--danger"
-                        disabled={busy.startsWith('delete-')}
-                        onClick={() => handleDelete(doc.id)}
-                      >
-                        Delete
-                      </button>
-                    )}
+                  </div>
                   </div>
                 </li>
               ))}

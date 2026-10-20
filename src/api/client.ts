@@ -226,6 +226,10 @@ export const api = {
   processDocument: (id: number) => send<DocumentSummary>(`/api/documents/${id}/process`, 'POST'),
   publishDocument: (id: number) => send<DocumentSummary>(`/api/documents/${id}/publish`, 'POST'),
   deleteDocument: (id: number) => send<unknown>(`/api/documents/${id}`, 'DELETE'),
+  updateDocument: (
+    id: number,
+    body: { period_label?: string; start_date?: string; end_date?: string; doc_type?: string },
+  ) => send<DocumentSummary>(`/api/documents/${id}`, 'PATCH', body),
   updateItem: (
     label: string,
     body: { statement: string; line_item: string; action: 'confirm' | 'correct'; value?: number },

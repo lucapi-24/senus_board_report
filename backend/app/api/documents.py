@@ -12,7 +12,7 @@ from app.core.config import settings
 from app.core.database import get_db
 from app.core.security import get_current_user, require_admin
 from app.models.financial import AuditLog, Document, User
-from app.schemas.documents import DocumentDetailResponse, DocumentResponse
+from app.schemas.documents import DocumentDetailResponse, DocumentResponse, DocumentUpdate
 from app.services import lifecycle
 from app.services.ingest import ingest_document, read_pages
 from app.services import period_detector
@@ -142,6 +142,51 @@ async def process_document(
     )
     await db.commit()
     doc = await db.get(Document, document_id)
+    return _reload(doc)
+
+
+@router.patch("/{document_id}", response_model=DocumentResponse)
+async def update_document(
+    document_id: int,
+    payload: DocumentUpdate,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require_admin),
+):
+    """Update a document's period label, dates, or type after upload."""
+    doc = await db.get(Document, document_id)
+    if doc is None:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    if doc.status == "published":
+        raise HTTPException(status_code=409, detail="Cannot edit a published document")
+
+    if payload.period_label is not None:
+        doc.period_label = payload.period_label
+    if payload.start_date is not None:
+        doc.period_start = payload.start_date
+    if payload.end_date is not None:
+        doc.period_end = payload.end_date
+    if payload.doc_type is not None:
+        doc.doc_type = payload.doc_type
+
+    db.add(
+        AuditLog(
+            user_email=user.email,
+            action="update",
+            entity="document",
+            entity_id=doc.id,
+            after_json=json.dumps(
+                {
+                    "period_label": doc.period_label,
+                    "start_date": str(doc.period_start),
+                    "end_date": str(doc.period_end),
+                    "doc_type": doc.doc_type,
+                }
+            ),
+        )
+    )
+    await db.commit()
+    await db.refresh(doc)
     return _reload(doc)
 
 

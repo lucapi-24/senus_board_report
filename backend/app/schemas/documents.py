@@ -23,3 +23,10 @@ class DocumentResponse(BaseModel):
 
 class DocumentDetailResponse(DocumentResponse):
     review: Optional[Dict[str, Any]] = None
+
+
+class DocumentUpdate(BaseModel):
+    period_label: Optional[str] = None
+    start_date: Optional[date] = None
+    end_date: Optional[date] = None
+    doc_type: Optional[str] = None
