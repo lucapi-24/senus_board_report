@@ -1279,12 +1279,35 @@
 }
 
 .ingestion {
-  display: flex;
-  flex-direction: column;
-  gap: 24px;
-  padding-top: 32px;
-  padding-bottom: 48px;
-}
+    display: flex;
+    flex-direction: column;
+    gap: 24px;
+    padding-top: 0;
+    padding-bottom: 48px;
+  }
+
+  .ingestion__head {
+    background: linear-gradient(135deg, #023c28 0%, #0a5240 100%);
+    color: #fff;
+    padding: 56px 0 64px;
+    width: 100vw;
+    margin-left: calc(50% - 50vw);
+    margin-right: calc(50% - 50vw);
+  }
+
+  .ingestion__head .container,
+  .ingestion__head .dashboard__hero-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-end;
+    gap: 40px;
+    flex-wrap: wrap;
+  }
+
+  .ingestion .container:not(.ingestion__head > .container) {
+    width: min(1100px, 100% - 32px);
+    margin: 0 auto;
+  }
 
   .panel__title {
     display: flex;

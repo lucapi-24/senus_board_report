@@ -171,17 +171,20 @@ export function Ingestion({ role, onDataChanged }: { role?: string; onDataChange
     : 0
 
   return (
-    <div className="container ingestion">
-      <div className="ingestion__head">
-        <div>
-          <span className="dashboard__eyebrow">INGESTION</span>
-          <h1 className="dashboard__title">Documents &amp; Review</h1>
-          <p className="dashboard__lede">
-            Upload a source PDF, extract it with two independent extractors, then confirm or correct
-            every figure before publishing.
-          </p>
+    <div className="ingestion">
+      <section className="ingestion__head">
+        <div className="container">
+          <div>
+            <span className="dashboard__eyebrow">INGESTION</span>
+            <h1 className="dashboard__title">Documents &amp; Review</h1>
+            <p className="dashboard__lede">
+              Upload a source PDF, extract it with two independent extractors, then confirm or correct
+              every figure before publishing.
+            </p>
+          </div>
         </div>
-      </div>
+      </section>
+      <div className="container">
 
       {error && <div className="state state--error ingest__error">{error}</div>}
 
@@ -243,39 +246,46 @@ export function Ingestion({ role, onDataChanged }: { role?: string; onDataChange
       </section>
       )}
 
-      <section className="panel">
-        <h2 className="panel__title">Documents</h2>
-        {documents.length === 0 ? (
-          <p className="muted">No documents uploaded yet.</p>
-        ) : (
-          <ul className="doc-list">
-            {documents.map((doc) => (
-              <li key={doc.id} className={`doc-row ${detail?.id === doc.id ? 'is-selected' : ''}`}>
-                <button type="button" className="doc-row__main" onClick={() => openDocument(doc.id)}>
-                  <strong>{doc.period_label ?? doc.filename}</strong>
-                  <span className="muted">
-                    {doc.filename}
-                    {doc.page_count ? ` · ${doc.page_count} pages` : ''}
-                  </span>
-                </button>
-                <StatusBadge status={doc.status} />
-                <div className="doc-row__actions">
-                  {isAdmin && (doc.status === 'uploaded' || doc.status === 'error') && (
-                    <button
-                      type="button"
-                      className="btn btn--small"
-                      disabled={busy === 'process'}
-                      onClick={() => handleProcess(doc.id)}
-                    >
-                      Process
-                    </button>
-                  )}
-                  {doc.status !== 'uploaded' && (
-                    <button type="button" className="btn btn--small" onClick={() => openDocument(doc.id)}>
-                      Review
-                    </button>
-                  )}
-                </div>
+        <section className="panel">
+          <h2 className="panel__title">Documents</h2>
+          {documents.length === 0 ? (
+            <p className="muted">No documents uploaded yet.</p>
+          ) : (
+            <ul className="doc-list">
+              {documents.map((doc) => (
+                <li key={doc.id} className={`doc-row ${detail?.id === doc.id ? 'is-selected' : ''}`}>
+                  <button type="button" className="doc-row__main" onClick={() => openDocument(doc.id)}>
+                    <strong>{doc.period_label ?? doc.filename}</strong>
+                    <span className="muted">
+                      {doc.filename}
+                      {doc.page_count ? ` · ${doc.page_count} pages` : ''}
+                    </span>
+                  </button>
+                  <StatusBadge status={doc.status} />
+                  <div className="doc-row__actions">
+                    {isAdmin && (doc.status === 'uploaded' || doc.status === 'error') && (
+                      <button
+                        type="button"
+                        className="btn btn--small"
+                        disabled={busy === 'process'}
+                        onClick={() => handleProcess(doc.id)}
+                      >
+                        Process
+                      </button>
+                    )}
+                    {doc.status !== 'uploaded' && (
+                      <button type="button" className="btn btn--small" onClick={() => openDocument(doc.id)}>
+                        Review
+                      </button>
+                    )}
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+      </div>
+    </div>
               </li>
             ))}
           </ul>
