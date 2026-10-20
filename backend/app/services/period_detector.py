@@ -32,7 +32,7 @@ def _infer_start(end: date, scope: str) -> Optional[date]:
     s = scope.lower()
     if 'six months' in s or 'h1' in s or 'half' in s:
         if end.month == 12:
-            return date(end.year - 1, 7, 1)
+            return date(end.year, 7, 1)
         if end.month == 6:
             return date(end.year, 1, 1)
         if end.month >= 7:
