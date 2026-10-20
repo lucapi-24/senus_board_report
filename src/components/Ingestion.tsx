@@ -197,9 +197,9 @@ export function Ingestion({ role, onDataChanged }: { role?: string; onDataChange
 
         {isAdmin && (
         <section className="panel">
-          <h2 className="panel__title">
-            <FileUp size={18} aria-hidden="true" /> Upload a document
-          </h2>
+          <h3 className="panel__subtitle">
+            <FileUp size={16} aria-hidden="true" /> Upload a document
+          </h3>
           <div className="upload-grid">
           <label className="field">
             <span>PDF file</span>

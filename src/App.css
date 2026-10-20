@@ -1319,6 +1319,16 @@
     color: #fff;
   }
 
+  .panel__subtitle {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 15px;
+    font-weight: 600;
+    margin-bottom: 16px;
+    color: var(--senus-text);
+  }
+
 .upload-grid {
     display: grid;
     grid-template-columns: repeat(5, minmax(0, 1fr)) auto;
