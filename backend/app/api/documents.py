@@ -145,6 +145,32 @@ async def process_document(
     return _reload(doc)
 
 
+@router.delete("/{document_id}", status_code=204)
+async def delete_document(
+    document_id: int,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require_admin),
+):
+    doc = await db.get(Document, document_id)
+    if doc is None:
+        raise HTTPException(status_code=404, detail="Document not found")
+    try:
+        if doc.stored_path:
+            from pathlib import Path
+
+            p = Path(doc.stored_path)
+            if p.exists():
+                p.unlink()
+    except Exception:
+        pass
+    db.delete(doc)
+    db.add(
+        AuditLog(user_email=user.email, action="delete", entity="document", entity_id=document_id)
+    )
+    await db.commit()
+    return None
+
+
 @router.post("/{document_id}/publish", response_model=DocumentResponse)
 async def publish_document(
     document_id: int,

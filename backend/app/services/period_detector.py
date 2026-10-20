@@ -66,26 +66,28 @@ def detect_periods(pages: List[Tuple[int, str]]) -> List[PeriodCandidate]:
             sl = scope.lower()
             if 'six months' in sl:
                 if end_d.month == 12:
-                    label = f"HY{end_d.year}"
+                    # For FY ending June, six months to Dec are H2 of next FY -> HY{end_d.year+1}
+                    label = f"HY{end_d.year + 1}"
                 elif end_d.month == 6:
                     label = f"H1{end_d.year}"
                 else:
                     if end_d.month >= 7:
-                        label = f"HY{end_d.year}"
+                        label = f"HY{end_d.year + 1}" if end_d.month == 12 else f"HY{end_d.year}"
                     else:
-                        label = f"HY{end_d.year}"
+                        label = f"H1{end_d.year}"
             elif 'year' in sl or 'twelve' in sl:
                 if end_d.month == 6:
                     label = f"FY{end_d.year}"
-            score = 50.0
+            score = 60.0
             if 'statement' in tl or 'income' in tl or 'balance' in tl or 'cash' in tl or 'consolidated' in tl:
-                score += 25
+                score += 30
             if 'condensed' in tl or 'interim' in tl:
-                score += 10
+                score += 15
+            # Strongly prefer non-comparative
             if is_comp:
-                score -= 50
+                score -= 80
             if score < 0:
-                score = 5
+                score = 1
             candidates.append(PeriodCandidate(label, start_d, end_d, score, pnum, 'end_statement', ctx))
         for m in PERIOD_CODE_RE.finditer(t):
             kind, yr = m.group(1), m.group(2)
@@ -114,7 +116,7 @@ def pick_primary(cands: List[PeriodCandidate], min_score: float = 50.0) -> Optio
         primary = max(filtered, key=lambda x: x.score)
     return primary
 
-def validate_against(doc_label: Optional[str], doc_start, doc_end, pages: List[Tuple[int, str]], min_conf: float = 60.0):
+def validate_against(doc_label: Optional[str], doc_start, doc_end, pages: List[Tuple[int, str]], min_conf: float = 70.0):
     cands = detect_periods(pages)
     primary = pick_primary(cands)
     if primary is None:
