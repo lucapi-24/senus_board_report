@@ -1326,6 +1326,11 @@
     color: #fff;
   }
 
+  .panel__title:empty {
+    display: none;
+    margin-bottom: 0;
+  }
+
   .panel__subtitle {
     display: flex;
     align-items: center;
