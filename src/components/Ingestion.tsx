@@ -186,21 +186,21 @@ export function Ingestion({ role, onDataChanged }: { role?: string; onDataChange
       </section>
       <div className="container">
 
-      {error && <div className="state state--error ingest__error">{error}</div>}
+        {error && <div className="state state--error ingest__error">{error}</div>}
 
-      {!isAdmin && (
-        <div className="callout callout--readonly">
-          Read-only view — your account has viewer access. Sign in as an administrator to upload,
-          review or publish documents.
-        </div>
-      )}
+        {!isAdmin && (
+          <div className="callout callout--readonly">
+            Read-only view - your account has viewer access. Sign in as an administrator to upload,
+            review or publish documents.
+          </div>
+        )}
 
-      {isAdmin && (
-      <section className="panel">
-        <h2 className="panel__title">
-          <FileUp size={18} aria-hidden="true" /> Upload a document
-        </h2>
-        <div className="upload-grid">
+        {isAdmin && (
+        <section className="panel">
+          <h2 className="panel__title">
+            <FileUp size={18} aria-hidden="true" /> Upload a document
+          </h2>
+          <div className="upload-grid">
           <label className="field">
             <span>PDF file</span>
             <input
@@ -286,11 +286,6 @@ export function Ingestion({ role, onDataChanged }: { role?: string; onDataChange
         </section>
       </div>
     </div>
-              </li>
-            ))}
-          </ul>
-        )}
-      </section>
 
       {detail?.error && <div className="callout callout--error">{detail.error}</div>}
 
