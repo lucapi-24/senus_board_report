@@ -1040,6 +1040,23 @@
   color: var(--senus-negative);
 }
 
+.ingest__error {
+  min-height: auto;
+  align-items: flex-start;
+  justify-content: flex-start;
+  width: 100%;
+  padding: 1rem 1.25rem;
+  margin: 0.5rem 0;
+  background: rgba(var(--senus-negative-rgb, 180, 35, 24), 0.08);
+  border: 1px solid rgba(var(--senus-negative-rgb, 180, 35, 24), 0.35);
+  border-radius: var(--radius);
+  color: var(--senus-negative);
+  font-size: 0.875rem;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 .state__hint {
   font-size: 0.875rem;
   color: var(--senus-text-muted);

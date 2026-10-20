@@ -212,7 +212,14 @@ export const api = {
     })
     if (!res.ok) {
       onUnauthorized(res.status)
-      throw new Error((await res.text()) || 'Upload failed')
+      let detail: string | null = null
+      try {
+        const json = await res.json()
+        detail = json.detail ?? null
+      } catch {
+        detail = null
+      }
+      throw new Error(detail || (await res.text()) || 'Upload failed')
     }
     return (await res.json()) as DocumentSummary
   },
