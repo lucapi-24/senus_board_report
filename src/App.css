@@ -1290,9 +1290,9 @@
     background: linear-gradient(135deg, #023c28 0%, #0a5240 100%);
     color: #fff;
     padding: 3.5rem 0 4rem;
-    width: 100vw;
-    margin-left: calc(50% - 50vw);
-    margin-right: calc(50% - 50vw);
+    width: 100dvw;
+    margin-left: calc(50% - 50dvw);
+    margin-right: calc(50% - 50dvw);
   }
 
   .ingestion__head .container,
