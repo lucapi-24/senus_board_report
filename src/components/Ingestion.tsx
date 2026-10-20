@@ -206,6 +206,7 @@ export function Ingestion({ role, onDataChanged }: { role?: string; onDataChange
             <input
               type="file"
               accept="application/pdf"
+              className="file-input"
               onChange={(e) => setFile(e.target.files?.[0] ?? null)}
             />
           </label>

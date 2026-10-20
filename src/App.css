@@ -1379,20 +1379,30 @@
     background: var(--senus-surface);
   }
 
-  .field input[type="file"] {
+  .field input[type="file"],
+  .file-input {
     padding: 8px 10px;
     background: var(--senus-surface-alt);
+    font-size: 13px;
   }
 
-  .field input[type="file"]::file-selector-button {
+  .field input[type="file"]::file-selector-button,
+  .file-input::file-selector-button {
     margin-right: 12px;
-    padding: 7px 12px;
+    padding: 6px 10px;
     border-radius: var(--radius-sm);
-    border: 1px solid rgba(248, 177, 149, 0.6);
+    border: 1px solid var(--senus-border);
     background: transparent;
-    color: var(--senus-peach);
-    font-weight: 600;
+    color: var(--senus-text-muted);
+    font-weight: 500;
+    font-size: 13px;
     cursor: pointer;
+  }
+
+  .field input[type="file"]::file-selector-button:hover,
+  .file-input::file-selector-button:hover {
+    color: var(--senus-text);
+    border-color: rgba(248, 177, 149, 0.5);
   }
 
 .doc-list {
