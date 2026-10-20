@@ -486,10 +486,17 @@
 }
 
 .dashboard__eyebrow {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: rgba(248, 177, 149, 0.16);
+  border: 1px solid rgba(248, 177, 149, 0.55);
   color: var(--senus-peach);
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 700;
-  letter-spacing: 0.14em;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
 }
 
 .dashboard__title {
@@ -499,12 +506,11 @@
   margin: 12px 0 12px;
 }
 
-.dashboard__lede {
-  color: rgba(255, 255, 255, 0.78);
-  font-size: 17px;
-  line-height: 1.6;
-  max-width: 560px;
-}
+  .dashboard__lede {
+    color: rgba(255, 255, 255, 0.86);
+    max-width: 720px;
+    line-height: 1.8;
+  }
 
 .dashboard__note {
   color: rgba(255, 255, 255, 0.6);
@@ -1260,10 +1266,10 @@
   font-variant-numeric: tabular-nums;
 }
 
-.btn--primary:hover {
-  background: var(--senus-teal-dark);
-  color: var(--senus-white);
-}
+  .btn--primary:hover {
+    background: var(--senus-peach);
+    color: #1f2a2f;
+  }
 
 .btn--small {
   padding: 6px 14px;
@@ -1280,40 +1286,81 @@
   padding-bottom: 48px;
 }
 
-.panel__title {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 18px;
-  font-weight: 700;
-  margin-bottom: 18px;
-}
+  .panel__title {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 18px;
+    font-weight: 700;
+    margin-bottom: 18px;
+    color: #fff;
+  }
 
 .upload-grid {
-  display: grid;
-  grid-template-columns: repeat(5, 1fr) auto;
-  gap: 16px;
-  align-items: end;
-}
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr)) auto;
+    gap: 16px;
+    align-items: end;
+  }
 
-.field {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--senus-text-muted);
-}
+  .field {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--senus-text);
+  }
 
-.field input,
-.field select {
-  padding: 9px 10px;
-  border: 1px solid var(--senus-border);
-  border-radius: var(--radius-sm);
-  font-size: 14px;
-  color: var(--senus-text);
-  background: var(--senus-surface);
-}
+  .field label {
+    color: var(--senus-text-muted);
+    letter-spacing: 0.01em;
+  }
+
+  .field input,
+  .field select {
+    padding: 10px 12px;
+    border: 1px solid var(--senus-border);
+    border-radius: var(--radius-sm);
+    font-size: 14px;
+    color: var(--senus-text);
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.02) 0%, rgba(255, 255, 255, 0.01) 100%);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.02);
+    transition: border-color 120ms ease, box-shadow 120ms ease, background 120ms ease;
+  }
+
+  .field input::placeholder {
+    color: var(--senus-text-subtle);
+  }
+
+  .field input:hover,
+  .field select:hover {
+    border-color: rgba(248, 177, 149, 0.6);
+  }
+
+  .field input:focus,
+  .field select:focus {
+    outline: none;
+    border-color: var(--senus-peach);
+    box-shadow: 0 0 0 3px rgba(248, 177, 149, 0.18);
+    background: var(--senus-surface);
+  }
+
+  .field input[type="file"] {
+    padding: 8px 10px;
+    background: var(--senus-surface-alt);
+  }
+
+  .field input[type="file"]::file-selector-button {
+    margin-right: 12px;
+    padding: 7px 12px;
+    border-radius: var(--radius-sm);
+    border: 1px solid rgba(248, 177, 149, 0.6);
+    background: transparent;
+    color: var(--senus-peach);
+    font-weight: 600;
+    cursor: pointer;
+  }
 
 .doc-list {
   list-style: none;
