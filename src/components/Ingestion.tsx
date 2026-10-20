@@ -164,6 +164,19 @@ export function Ingestion({ role, onDataChanged }: { role?: string; onDataChange
       onDataChanged?.()
     })
 
+  const handleDelete = async (id: number) => {
+    if (!window.confirm(`Delete document ${id}? This cannot be undone.`)) return
+    await run(`delete-${id}`, async () => {
+      await api.deleteDocument(id)
+      setDocuments(documents.filter((d) => d.id !== id))
+      if (detail?.id === id) {
+        setDetail(null)
+        setPeriod(null)
+      }
+      onDataChanged?.()
+    })
+  }
+
   const pending = period
     ? [...period.pnl, ...period.balance_sheet, ...period.cash_flow].filter(
         (i) => i.review_status === 'flagged',
@@ -285,6 +298,16 @@ export function Ingestion({ role, onDataChanged }: { role?: string; onDataChange
                     {doc.status !== 'uploaded' && (
                       <button type="button" className="btn btn--small" onClick={() => openDocument(doc.id)}>
                         Review
+                      </button>
+                    )}
+                    {isAdmin && doc.status !== 'published' && (
+                      <button
+                        type="button"
+                        className="btn btn--small btn--danger"
+                        disabled={busy.startsWith('delete-')}
+                        onClick={() => handleDelete(doc.id)}
+                      >
+                        Delete
                       </button>
                     )}
                   </div>

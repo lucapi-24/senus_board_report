@@ -1278,6 +1278,17 @@
   border-radius: var(--radius-sm);
 }
 
+.btn--danger {
+  background: var(--senus-danger, #b42318);
+  color: #fff;
+  border: none;
+}
+
+.btn--danger:hover {
+  background: #9b1f14;
+  border-color: transparent;
+}
+
 .ingestion {
     display: flex;
     flex-direction: column;
