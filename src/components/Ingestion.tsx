@@ -284,12 +284,10 @@ export function Ingestion({ role, onDataChanged }: { role?: string; onDataChange
             </ul>
           )}
         </section>
-      </div>
-    </div>
 
-      {detail?.error && <div className="callout callout--error">{detail.error}</div>}
+        {detail?.error && <div className="callout callout--error">{detail.error}</div>}
 
-      {detail && detail.review?.summary && period && (
+        {detail && detail.review?.summary && period && (
         <section className="panel review">
           <div className="review__head">
             <h2 className="panel__title">
@@ -390,7 +388,8 @@ export function Ingestion({ role, onDataChanged }: { role?: string; onDataChange
             )
           })}
         </section>
-      )}
+        )}
+      </div>
     </div>
   )
 }
