@@ -14,7 +14,8 @@ from app.core.security import get_current_user, require_admin
 from app.models.financial import AuditLog, Document, User
 from app.schemas.documents import DocumentDetailResponse, DocumentResponse
 from app.services import lifecycle
-from app.services.ingest import ingest_document
+from app.services.ingest import ingest_document, read_pages
+from app.services import period_detector
 
 router = APIRouter(prefix="/api/documents", tags=["documents"])
 
@@ -43,6 +44,21 @@ async def upload_document(
     UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
     stored = UPLOAD_DIR / f"{uuid.uuid4().hex}_{original}"
     stored.write_bytes(await file.read())
+
+    # Validate against document content
+    try:
+        pages = read_pages(str(stored))
+        ok, msg, cands = period_detector.validate_against(period_label, start_date, end_date, pages)
+        if not ok:
+            try:
+                stored.unlink(missing_ok=True)
+            except Exception:
+                pass
+            raise HTTPException(status_code=400, detail=msg)
+    except HTTPException:
+        raise
+    except Exception:
+        pass
 
     doc = Document(
         filename=original,
@@ -103,6 +119,18 @@ async def process_document(
     user: User = Depends(require_admin),
 ):
     """Run the hybrid extraction and persist the resulting period for review."""
+    doc = await db.get(Document, document_id)
+    if doc is None:
+        raise HTTPException(status_code=404, detail="Document not found")
+    try:
+        pages = read_pages(doc.stored_path)
+        ok, msg, cands = period_detector.validate_against(doc.period_label, doc.period_start, doc.period_end, pages)
+        if not ok:
+            raise HTTPException(status_code=400, detail=msg)
+    except HTTPException:
+        raise
+    except Exception:
+        pass  # don't block if detection fails
     try:
         await ingest_document(document_id, db)
     except lifecycle.InvalidTransition as exc:
