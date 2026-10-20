@@ -201,16 +201,23 @@ export function Ingestion({ role, onDataChanged }: { role?: string; onDataChange
             <FileUp size={16} aria-hidden="true" /> Upload a document
           </h3>
           <div className="upload-grid">
-          <label className="field">
+          <div className="field">
             <span>PDF file</span>
-            <input
-              type="file"
-              accept="application/pdf"
-              className="file-input"
-              onChange={(e) => setFile(e.target.files?.[0] ?? null)}
-            />
+            <div className="file-field">
+              <input
+                id="pdf-upload"
+                type="file"
+                accept="application/pdf"
+                className="file-input-hidden"
+                onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+              />
+              <label htmlFor="pdf-upload" className="btn btn--small file-trigger">
+                Choose file
+              </label>
+            </div>
             {file && <span className="muted small">{file.name}</span>}
-          </label>
+            {!file && <span className="muted small">No file chosen</span>}
+          </div>
           <label className="field">
             <span>Period label</span>
             <input
