@@ -133,4 +133,4 @@ def validate_against(doc_label: Optional[str], doc_start, doc_end, pages: List[T
         return True, f"Matched {primary.label or 'period'} (score {primary.score:.1f})", cands
     if primary.score < min_conf:
         return True, 'Low confidence detection; proceeding', cands
-    return False, '; '.join(issues) + f" (detected {primary.label or ''} {primary.start_date}-{primary.end_date}, score {primary.score:.1f})", cands
+    return False, 'Dates not found in document; please check the period label and dates against the document content.', cands
