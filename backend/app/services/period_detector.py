@@ -5,7 +5,13 @@ from datetime import date
 from typing import List, Optional, Tuple
 
 PERIOD_CODE_RE = re.compile(r"\b(HY|FY|H1|H2|Q[1-4])\s*(\d{4})\b", re.I)
-END_RE = re.compile(r"for the\s+(six months|year|twelve months|quarter)\s+ended\s+([0-9]{1,2})\s+([A-Za-z]{3,9})\s+([0-9]{4})", re.I)
+END_RE = re.compile(
+    r"(?:for the|period ended|half year ended|year ended)?\s*"
+    r"(?:six months|6 months|year|12 months|twelve months|quarter|3 months)?\s*"
+    r"(?:ended\s+)?([0-9]{1,2})\s+([A-Za-z]{3,9})\s+([0-9]{4})",
+    re.I,
+)
+END_SCOPE_RE = re.compile(r"(six months|6 months|year|12 months|twelve months|quarter|3 months)", re.I)
 AS_AT_RE = re.compile(r"as at\s+([0-9]{1,2})\s+([A-Za-z]{3,9})\s+([0-9]{4})", re.I)
 COMPARATIVE_WORDS = ("comparative", "previous", "prior period", "prior year", "restated comparative")
 
@@ -30,7 +36,8 @@ def _parse_date(day: str, mon: str, yr: str) -> date:
 
 def _infer_start(end: date, scope: str) -> Optional[date]:
     s = scope.lower()
-    if 'six months' in s or 'h1' in s or 'half' in s:
+    is_six = 'six months' in s or '6 months' in s or 'h1' in s or 'half' in s
+    if is_six:
         if end.month == 12:
             return date(end.year, 7, 1)
         if end.month == 6:
@@ -38,13 +45,25 @@ def _infer_start(end: date, scope: str) -> Optional[date]:
         if end.month >= 7:
             return date(end.year, 7, 1)
         return date(end.year - 1, 7, 1)
-    if 'year' in s or 'twelve' in s:
+    is_year = 'year' in s or 'twelve' in s or '12 months' in s
+    if is_year:
         if end.month == 6:
             return date(end.year - 1, 7, 1)
         return date(end.year - 1, 7, 1)
-    if 'quarter' in s:
+    if 'quarter' in s or '3 months' in s:
         return date(end.year, ((end.month - 1)//3)*3 + 1, 1)
     return None
+
+def _scope_for(text: str, pos: int) -> str:
+    window = text[max(0, pos - 60):pos].lower()
+    if 'six months' in window or '6 months' in window or 'half year' in window:
+        return 'six months'
+    if 'twelve months' in window or '12 months' in window or 'year' in window:
+        return 'year'
+    if 'quarter' in window or '3 months' in window:
+        return 'quarter'
+    return 'six months'
+
 
 def detect_periods(pages: List[Tuple[int, str]]) -> List[PeriodCandidate]:
     candidates: List[PeriodCandidate] = []
@@ -56,26 +75,25 @@ def detect_periods(pages: List[Tuple[int, str]]) -> List[PeriodCandidate]:
         ctx = t[:200]
         is_comp = any(w in tl for w in COMPARATIVE_WORDS)
         for m in END_RE.finditer(t):
-            scope, day, mon, yr = m.group(1), m.group(2), m.group(3), m.group(4)
+            day, mon, yr = m.group(1), m.group(2), m.group(3)
             try:
                 end_d = _parse_date(day, mon, yr)
             except Exception:
                 continue
+            scope = _scope_for(t, m.start())
             start_d = _infer_start(end_d, scope)
             label = None
             sl = scope.lower()
-            if 'six months' in sl:
+            is_six = 'six months' in sl or '6 months' in sl or 'half' in sl
+            if is_six:
                 if end_d.month == 12:
-                    # For FY ending June, six months to Dec are H2 of next FY -> HY{end_d.year+1}
                     label = f"HY{end_d.year + 1}"
                 elif end_d.month == 6:
                     label = f"H1{end_d.year}"
                 else:
-                    if end_d.month >= 7:
-                        label = f"HY{end_d.year + 1}" if end_d.month == 12 else f"HY{end_d.year}"
-                    else:
-                        label = f"H1{end_d.year}"
-            elif 'year' in sl or 'twelve' in sl:
+                    label = f"HY{end_d.year + 1}" if end_d.month == 12 else f"HY{end_d.year}"
+            is_year = 'year' in sl or 'twelve' in sl or '12 months' in sl
+            if is_year:
                 if end_d.month == 6:
                     label = f"FY{end_d.year}"
             score = 60.0
@@ -83,7 +101,6 @@ def detect_periods(pages: List[Tuple[int, str]]) -> List[PeriodCandidate]:
                 score += 30
             if 'condensed' in tl or 'interim' in tl:
                 score += 15
-            # Strongly prefer non-comparative
             if is_comp:
                 score -= 80
             if score < 0:
