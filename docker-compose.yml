@@ -27,6 +27,10 @@ services:
     environment:
       # Point the API at the postgres service (overrides backend/.env).
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-senus}:${POSTGRES_PASSWORD:-senus_dev}@postgres:5432/${POSTGRES_DB:-senus_board}
+      # Set SEED_FROM_DISK=false to start with an empty database (useful for
+      # demo videos). Set to "true" (or remove) to load the fixture periods
+      # from backend/scripts/extracted/ on boot.
+      SEED_FROM_DISK: "false"
     ports:
       - "8000:8000"
     depends_on:

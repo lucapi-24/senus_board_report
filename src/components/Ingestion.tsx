@@ -295,9 +295,14 @@ export function Ingestion({ role, onDataChanged }: { role?: string; onDataChange
                         Process
                       </button>
                     )}
-                    {doc.status !== 'uploaded' && (
+                    {(doc.status === 'extracted' || doc.status === 'in_review' || doc.status === 'published') && (
                       <button type="button" className="btn btn--small" onClick={() => openDocument(doc.id)}>
                         Review
+                      </button>
+                    )}
+                    {doc.status === 'processing' && (
+                      <button type="button" className="btn btn--small" disabled>
+                        Processing…
                       </button>
                     )}
                     {isAdmin && doc.status !== 'published' && (
@@ -318,6 +323,14 @@ export function Ingestion({ role, onDataChanged }: { role?: string; onDataChange
         </section>
 
         {detail?.error && <div className="callout callout--error">{detail.error}</div>}
+
+        {detail && !detail.review?.summary && (
+          <section className="panel">
+            <div className="callout callout--info">
+              Este documento aún no se ha procesado. Pulsa <strong>Process</strong> para extraer los datos antes de revisarlos.
+            </div>
+          </section>
+        )}
 
         {detail && detail.review?.summary && period && (
         <section className="panel review">

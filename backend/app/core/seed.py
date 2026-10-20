@@ -5,6 +5,7 @@ populated dashboard) and by the CLI loader in `scripts/load_data.py`.
 """
 
 import json
+import os
 from datetime import date
 from decimal import Decimal
 from pathlib import Path
@@ -147,7 +148,13 @@ async def seed_from_disk(force: bool = False) -> List[str]:
 
     Set ``force=True`` to reload regardless of existing data. The schema is
     expected to exist already (applied by Alembic).
+
+    Set env ``SEED_FROM_DISK=false`` to skip seeding (useful for demos where
+    the database should start empty).
     """
+    if os.environ.get("SEED_FROM_DISK", "true").lower() == "false":
+        return []
+
     if not EXTRACTED_DIR.exists():
         return []
 
