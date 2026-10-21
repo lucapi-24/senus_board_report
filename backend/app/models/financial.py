@@ -41,7 +41,7 @@ class Document(Base):
     extracted_at = Column(DateTime(timezone=True), nullable=True)
     raw_json = Column(Text, nullable=True)                  # JSON string of extracted data
 
-    periods = relationship("Period", backref="source_document")
+    periods = relationship("Period", backref="source_document", cascade="all, delete-orphan")
 
 
 class Period(Base):
