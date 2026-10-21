@@ -48,7 +48,7 @@ async def upload_document(
     # Validate against document content
     try:
         pages = read_pages(str(stored))
-        ok, msg, cands = period_detector.validate_against(period_label, start_date, end_date, pages)
+        ok, msg, cands = await period_detector.validate_against(period_label, start_date, end_date, pages)
         if not ok:
             try:
                 stored.unlink(missing_ok=True)
@@ -124,7 +124,7 @@ async def process_document(
         raise HTTPException(status_code=404, detail="Document not found")
     try:
         pages = read_pages(doc.stored_path)
-        ok, msg, cands = period_detector.validate_against(doc.period_label, doc.period_start, doc.period_end, pages)
+        ok, msg, cands = await period_detector.validate_against(doc.period_label, doc.period_start, doc.period_end, pages)
         if not ok:
             raise HTTPException(status_code=400, detail=msg)
     except HTTPException:

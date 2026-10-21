@@ -6,6 +6,8 @@ from typing import List, Optional, Tuple
 
 import dateutil.parser as dparser
 
+from app.services.llm_extract import build_client, annotate_pages
+
 PERIOD_CODE_RE = re.compile(r"\b(HY|FY|H1|H2|Q[1-4])\s*(\d{4})\b", re.I)
 DATE_TOKEN_RE = re.compile(
     r"(\d{1,2}[-/\s](?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*[-/\s]\d{4})"
@@ -14,6 +16,28 @@ DATE_TOKEN_RE = re.compile(
     r"|(\d{4}[-/\s]\d{1,2}[-/\s]\d{1,2})",
     re.I,
 )
+
+PERIOD_LLM_PROMPT = """You are reviewing a financial document. Extract the reporting period information.
+
+Look for:
+- Period label (e.g. "HY2026", "FY2025", "H1 2026")
+- Start date of the reporting period
+- End date of the reporting period
+
+Focus on the MAIN reporting period, NOT comparative periods, publication dates, or admission dates.
+
+Return ONLY a JSON object:
+{
+  "period_label": "HY2026 or null",
+  "start_date": "YYYY-MM-DD or null",
+  "end_date": "YYYY-MM-DD or null",
+  "confidence": 0.0 to 1.0
+}
+
+Document:
+---
+{document}
+---"""
 
 @dataclass
 class PeriodCandidate:
@@ -82,10 +106,9 @@ def _label_for(end: date, scope: str) -> Optional[str]:
     return None
 
 def detect_periods(pages: List[Tuple[int, str]]) -> List[PeriodCandidate]:
-    """Detect all period candidates in the document.
+    """Detect all period candidates in the document using regex/dateutil.
 
-    Returns every date found with its inferred label/score. The caller decides
-    which one matches the uploaded document.
+    Returns every date found with its inferred label/score.
     """
     candidates: List[PeriodCandidate] = []
     for pnum, text in pages:
@@ -128,6 +151,75 @@ def detect_periods(pages: List[Tuple[int, str]]) -> List[PeriodCandidate]:
             dedup.append(c)
     return dedup
 
+async def detect_period_with_llm(pages: List[Tuple[int, str]]) -> Optional[PeriodCandidate]:
+    """Ask the LLM to identify the reporting period from the document.
+
+    Used as a fallback when regex detection is uncertain.
+    """
+    client = build_client()
+    if client is None:
+        return None
+
+    import asyncio, json
+
+    document = annotate_pages(pages)
+    prompt = PERIOD_LLM_PROMPT.replace("{document}", document)
+
+    response = None
+    last_error: Optional[Exception] = None
+    for attempt in range(3):
+        try:
+            response = await client.chat.completions.create(
+                model="openai/gpt-oss-120b",
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.0,
+                max_tokens=1000,
+                response_format={"type": "json_object"},
+            )
+            break
+        except Exception as exc:
+            last_error = exc
+            await asyncio.sleep(1.5 * (attempt + 1))
+
+    if response is None:
+        return None
+
+    try:
+        data = json.loads(response.choices[0].message.content)
+    except (json.JSONDecodeError, AttributeError):
+        return None
+
+    label = data.get("period_label")
+    start_s = data.get("start_date")
+    end_s = data.get("end_date")
+    confidence = float(data.get("confidence", 0.5))
+
+    start_d = None
+    end_d = None
+    if start_s:
+        try:
+            start_d = date.fromisoformat(start_s)
+        except (ValueError, TypeError):
+            start_d = _try_parse_date(str(start_s))
+    if end_s:
+        try:
+            end_d = date.fromisoformat(end_s)
+        except (ValueError, TypeError):
+            end_d = _try_parse_date(str(end_s))
+
+    if not end_d:
+        return None
+
+    return PeriodCandidate(
+        label=label,
+        start_date=start_d,
+        end_date=end_d,
+        score=confidence * 100.0,
+        page=0,
+        source='llm',
+        context='',
+    )
+
 def find_matching_period(doc_label: Optional[str], doc_start, doc_end, pages: List[Tuple[int, str]]):
     """Check whether the user-submitted dates exist in the document.
 
@@ -137,22 +229,17 @@ def find_matching_period(doc_label: Optional[str], doc_start, doc_end, pages: Li
     """
     cands = detect_periods(pages)
 
-    # Collect all detected end dates
     detected_dates = [(c.label, c.start_date, c.end_date) for c in cands if c.end_date]
 
-    # Check if user's dates match any detected date
     date_matched = False
-    matched_label = None
     for label, start_d, end_d in detected_dates:
         if doc_start and doc_end and start_d == doc_start and end_d == doc_end:
             date_matched = True
-            matched_label = label
             break
 
     if date_matched:
         return True, f"Period ({doc_start} to {doc_end}) found in document.", cands
 
-    # Build helpful error message
     details = []
     for label, start_d, end_d in detected_dates[:5]:
         details.append(f"{label or 'unknown'}: {start_d} to {end_d}")
@@ -160,12 +247,38 @@ def find_matching_period(doc_label: Optional[str], doc_start, doc_end, pages: Li
 
     return False, f"Dates not found in document. Detected periods: {details_str}", cands
 
-def validate_against(doc_label: Optional[str], doc_start, doc_end, pages: List[Tuple[int, str]], min_conf: float = 70.0):
+async def validate_against(doc_label: Optional[str], doc_start, doc_end, pages: List[Tuple[int, str]], min_conf: float = 70.0):
     """Validate user-submitted dates against periods found in the document.
 
     The label is intentionally NOT compared -- it's just a user-chosen name.
     Only start_date/end_date must exist in the document.
+
+    Strategy:
+    1. Try regex/dateutil detection first (fast, free)
+    2. If regex finds a confident match (score >= min_conf), use it
+    3. If regex is uncertain, fall back to LLM detection
+
     Returns (ok, message, candidates).
     """
+    # Step 1: regex detection
     ok, msg, cands = find_matching_period(doc_label, doc_start, doc_end, pages)
-    return ok, msg, cands
+    if ok:
+        return ok, msg, cands
+
+    # Step 2: check if we have any confident regex candidates
+    primary = max(cands, key=lambda x: x.score) if cands else None
+    if primary and primary.score >= min_conf:
+        # Regex found something confident but it didn't match user's dates
+        detected = f"{primary.label or 'unknown'} {primary.start_date}-{primary.end_date} (score {primary.score:.1f})"
+        return False, f"Dates not found in document. Detected: {detected}", cands
+
+    # Step 3: fallback to LLM
+    llm_cand = await detect_period_with_llm(pages)
+    if llm_cand and llm_cand.end_date:
+        if doc_start and doc_end and llm_cand.start_date == doc_start and llm_cand.end_date == doc_end:
+            return True, f"Period ({doc_start} to {doc_end}) found in document (LLM).", cands
+        detected = f"{llm_cand.label or 'unknown'} {llm_cand.start_date}-{llm_cand.end_date} (score {llm_cand.score:.1f})"
+        return False, f"Dates not found in document. LLM detected: {detected}", cands
+
+    # Step 4: nothing found at all
+    return False, "Dates not found in document. Could not detect any period from the document content.", cands
