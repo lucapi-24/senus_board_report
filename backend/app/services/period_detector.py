@@ -8,18 +8,12 @@ import dateutil.parser as dparser
 
 PERIOD_CODE_RE = re.compile(r"\b(HY|FY|H1|H2|Q[1-4])\s*(\d{4})\b", re.I)
 DATE_TOKEN_RE = re.compile(
-    r"\b(\d{1,2}[-/\s](?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*[-/\s]\d{4})\b"
+    r"(\d{1,2}[-/\s](?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*[-/\s]\d{4})"
     r"|(\d{1,2}[-/\s]\d{1,2}[-/\s]\d{4})"
     r"|((?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{1,2},?\s+\d{4})"
     r"|(\d{4}[-/\s]\d{1,2}[-/\s]\d{1,2})",
     re.I,
 )
-COMPARATIVE_WORDS = ("comparative", "previous", "prior period", "prior year", "restated comparative")
-
-MONTH_MAP = {
-    'jan':1,'january':1,'feb':2,'february':2,'mar':3,'march':3,'apr':4,'april':4,'may':5,'jun':6,'june':6,
-    'jul':7,'july':7,'aug':8,'august':8,'sep':9,'september':9,'oct':10,'october':10,'nov':11,'november':11,'dec':12,'december':12
-}
 
 @dataclass
 class PeriodCandidate:
@@ -88,6 +82,11 @@ def _label_for(end: date, scope: str) -> Optional[str]:
     return None
 
 def detect_periods(pages: List[Tuple[int, str]]) -> List[PeriodCandidate]:
+    """Detect all period candidates in the document.
+
+    Returns every date found with its inferred label/score. The caller decides
+    which one matches the uploaded document.
+    """
     candidates: List[PeriodCandidate] = []
     for pnum, text in pages:
         if not text:
@@ -95,15 +94,11 @@ def detect_periods(pages: List[Tuple[int, str]]) -> List[PeriodCandidate]:
         t = text
         tl = t.lower()
         ctx = t[:200]
-        is_comp = any(w in tl for w in COMPARATIVE_WORDS)
 
         for m in PERIOD_CODE_RE.finditer(t):
             kind, yr = m.group(1), m.group(2)
             label_c = f"{kind.upper()}{yr}"
-            sc = 30.0 if is_comp else 45.0
-            if any(c.label == label_c for c in candidates):
-                continue
-            candidates.append(PeriodCandidate(label_c, None, None, sc, pnum, 'code', ctx))
+            candidates.append(PeriodCandidate(label_c, None, None, 45.0, pnum, 'code', ctx))
 
         for m in DATE_TOKEN_RE.finditer(t):
             token = m.group(0)
@@ -113,7 +108,6 @@ def detect_periods(pages: List[Tuple[int, str]]) -> List[PeriodCandidate]:
             scope = _scope_for(t, m.start())
             start_d = _infer_start(end_d, scope)
             label = _label_for(end_d, scope)
-
             score = 40.0
             if 'statement' in tl or 'income' in tl or 'balance' in tl or 'cash' in tl or 'consolidated' in tl:
                 score += 30
@@ -121,51 +115,64 @@ def detect_periods(pages: List[Tuple[int, str]]) -> List[PeriodCandidate]:
                 score += 15
             if 'half year' in tl or 'interim results' in tl:
                 score += 10
-            if is_comp:
-                score -= 80
             if score < 0:
                 score = 1
-
-            if any(c.end_date == end_d for c in candidates):
-                continue
             candidates.append(PeriodCandidate(label, start_d, end_d, score, pnum, 'date', ctx))
 
     dedup: List[PeriodCandidate] = []
     seen = set()
     for c in sorted(candidates, key=lambda x: x.score, reverse=True):
-        key = c.label if c.label else str(c.end_date)
+        key = str(c.end_date) if c.end_date else c.label
         if key not in seen:
             seen.add(key)
             dedup.append(c)
     return dedup
 
-def pick_primary(cands: List[PeriodCandidate], min_score: float = 50.0) -> Optional[PeriodCandidate]:
-    if not cands:
-        return None
-    primary = max(cands, key=lambda x: x.score)
-    if primary.score < min_score:
-        filtered = [c for c in cands if c.score >= 30]
-        if not filtered:
-            return primary
-        primary = max(filtered, key=lambda x: x.score)
-    return primary
+def find_matching_period(doc_label: Optional[str], doc_start, doc_end, pages: List[Tuple[int, str]]):
+    """Check whether the user-submitted label/dates exist in the document.
+
+    Returns (ok, message, details) where details lists all detected periods.
+    """
+    cands = detect_periods(pages)
+
+    # Collect all detected end dates and labels
+    detected_dates = [(c.label, c.start_date, c.end_date) for c in cands if c.end_date]
+    detected_labels = [c.label for c in cands if c.label]
+
+    # Check if user's dates match any detected date
+    date_matched = False
+    for label, start_d, end_d in detected_dates:
+        if doc_start and doc_end and start_d == doc_start and end_d == doc_end:
+            date_matched = True
+            break
+
+    # Check if user's label matches any detected label
+    label_matched = False
+    if doc_label:
+        for lbl in detected_labels:
+            if lbl and lbl.upper() == doc_label.upper():
+                label_matched = True
+                break
+
+    if date_matched and (not doc_label or label_matched):
+        return True, f"Period {doc_label} ({doc_start} to {doc_end}) found in document.", cands
+
+    # Build helpful error message
+    details = []
+    for label, start_d, end_d in detected_dates[:5]:
+        details.append(f"{label or 'unknown'}: {start_d} to {end_d}")
+    details_str = "; ".join(details) if details else "no dates detected"
+
+    msg_parts = [f"Dates not found in document. Detected periods: {details_str}"]
+    if doc_label and not label_matched:
+        msg_parts.append(f"Label '{doc_label}' not found in document.")
+    return False, " ".join(msg_parts), cands
 
 def validate_against(doc_label: Optional[str], doc_start, doc_end, pages: List[Tuple[int, str]], min_conf: float = 70.0):
-    cands = detect_periods(pages)
-    primary = pick_primary(cands)
-    if primary is None:
-        return True, 'No period detected in document. Please enter the period manually.', cands
-    issues = []
-    if doc_label and primary.label:
-        if primary.label.upper() != doc_label.upper():
-            issues.append(f"Label mismatch: submitted '{doc_label}' vs detected '{primary.label}'")
-    if doc_start and primary.start_date and doc_start != primary.start_date:
-        issues.append(f"Start date mismatch: {doc_start} vs {primary.start_date}")
-    if doc_end and primary.end_date and doc_end != primary.end_date:
-        issues.append(f"End date mismatch: {doc_end} vs {primary.end_date}")
-    if not issues:
-        return True, f"Matched {primary.label or 'period'} (score {primary.score:.1f})", cands
-    if primary.score < min_conf:
-        return True, 'Low confidence detection; proceeding', cands
-    detected = f"{primary.label or 'unknown'} {primary.start_date}-{primary.end_date} (score {primary.score:.1f})"
-    return False, f'Dates not found in document; please check the period label and dates against the document content. Detected: {detected}', cands
+    """Validate user-submitted label/dates against detected periods in the document.
+
+    Returns (ok, message, candidates). ok=True means the submitted period
+    was found in the document and processing can proceed.
+    """
+    ok, msg, cands = find_matching_period(doc_label, doc_start, doc_end, pages)
+    return ok, msg, cands
