@@ -32,6 +32,7 @@ from app.models.financial import (
 from app.services import lifecycle
 from app.services.deterministic import compute_kpis, parse_tables
 from app.services.llm_extract import STATEMENTS, extract_structured
+from app.services.period_detector import get_column_for_period
 from app.services.reconciliation import reconcile, review_status_for
 from app.services.validation import validate_period
 
@@ -226,8 +227,9 @@ async def ingest_document(document_id: int, db: AsyncSession) -> Dict[str, Any]:
 
     try:
         pages = read_pages(doc.stored_path)
-        tables = parse_tables(pages)
-        llm_lines = await extract_structured(pages, doc.period_label or "")
+        column = get_column_for_period(doc.period_start, doc.period_end, pages)
+        tables = parse_tables(pages, column=column or 0)
+        llm_lines = await extract_structured(pages, doc.period_label or "", column=column)
         result = reconcile(tables, llm_lines)
         proposal = build_proposal(result)
         await _persist(db, doc, result, proposal, len(pages))

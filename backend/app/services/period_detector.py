@@ -2,7 +2,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from datetime import date
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import dateutil.parser as dparser
 
@@ -253,6 +253,37 @@ def find_matching_period(doc_label: Optional[str], doc_start, doc_end, pages: Li
     details_str = "; ".join(details) if details else "no dates detected"
 
     return False, f"Dates not found in document. Detected periods: {details_str}", cands
+
+def period_to_column_map(pages: List[Tuple[int, str]]) -> Dict[Tuple[date, date], int]:
+    """Map each detected (start_date, end_date) to a table column number.
+
+    Columns are assigned left-to-right by end_date descending: the most recent
+    period gets column 0, the next most recent gets column 1, etc. This matches
+    the typical financial-statement layout where the current period is the
+    leftmost column and comparatives follow to the right.
+    """
+    cands = detect_periods(pages)
+    dated = [(c.start_date, c.end_date) for c in cands if c.start_date and c.end_date]
+    # Deduplicate
+    seen = set()
+    unique = []
+    for sd, ed in dated:
+        key = (sd, ed)
+        if key not in seen:
+            seen.add(key)
+            unique.append(key)
+    # Sort by end_date descending (most recent first = column 0)
+    unique.sort(key=lambda x: x[1], reverse=True)
+    return {key: idx for idx, key in enumerate(unique)}
+
+
+def get_column_for_period(doc_start: Optional[date], doc_end: Optional[date], pages: List[Tuple[int, str]]) -> Optional[int]:
+    """Return the table column number for the given period, or None if not found."""
+    if not doc_start or not doc_end:
+        return None
+    mapping = period_to_column_map(pages)
+    return mapping.get((doc_start, doc_end))
+
 
 async def validate_against(doc_label: Optional[str], doc_start, doc_end, pages: List[Tuple[int, str]], min_conf: float = 70.0):
     """Validate user-submitted dates against periods found in the document.

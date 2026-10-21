@@ -19,7 +19,11 @@ from extract_pdf import clean_number, compute_kpis, extract_from_text  # noqa: E
 __all__ = ["clean_number", "compute_kpis", "extract_from_text"]
 
 
-def parse_tables(pages) -> Dict[str, Any]:
-    """Run the deterministic parser over page-marked text."""
+def parse_tables(pages, column: int = 0) -> Dict[str, Any]:
+    """Run the deterministic parser over page-marked text.
+
+    ``column`` selects the figure column: 0 = current period (first column
+    printed), 1 = comparative prior-period column (second printed), etc.
+    """
     full_text = "".join(text for _, text in pages)
-    return extract_from_text(full_text, column=0, pages=pages)
+    return extract_from_text(full_text, column=column, pages=pages)
