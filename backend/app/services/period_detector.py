@@ -94,6 +94,10 @@ def _scope_for(text: str, pos: int) -> str:
 
 def _label_for(end: date, scope: str) -> Optional[str]:
     sl = scope.lower()
+    # Only label dates that appear in a period-ending context ("ended X"),
+    # not publication dates or other standalone dates.
+    if 'ended' not in sl:
+        return None
     is_six = 'six months' in sl or '6 months' in sl or 'half' in sl
     if is_six:
         if end.month == 12:
