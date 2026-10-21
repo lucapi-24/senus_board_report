@@ -257,13 +257,16 @@ def find_matching_period(doc_label: Optional[str], doc_start, doc_end, pages: Li
 def period_to_column_map(pages: List[Tuple[int, str]]) -> Dict[Tuple[date, date], int]:
     """Map each detected (start_date, end_date) to a table column number.
 
+    Only periods that have a label (e.g. HY2026, FY2025) are considered — bare
+    dates without a label (publication dates, admission dates, etc.) are ignored.
+
     Columns are assigned left-to-right by end_date descending: the most recent
-    period gets column 0, the next most recent gets column 1, etc. This matches
-    the typical financial-statement layout where the current period is the
-    leftmost column and comparatives follow to the right.
+    labeled period gets column 0, the next most recent gets column 1, etc. This
+    matches the typical financial-statement layout where the current period is
+    the leftmost column and comparatives follow to the right.
     """
     cands = detect_periods(pages)
-    dated = [(c.start_date, c.end_date) for c in cands if c.start_date and c.end_date]
+    dated = [(c.start_date, c.end_date) for c in cands if c.start_date and c.end_date and c.label]
     # Deduplicate
     seen = set()
     unique = []

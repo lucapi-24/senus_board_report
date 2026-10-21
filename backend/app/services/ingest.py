@@ -228,7 +228,10 @@ async def ingest_document(document_id: int, db: AsyncSession) -> Dict[str, Any]:
     try:
         pages = read_pages(doc.stored_path)
         column = get_column_for_period(doc.period_start, doc.period_end, pages)
-        tables = parse_tables(pages, column=column or 0)
+        # Only 2 table columns are supported by the regex parser (0=current, 1=comparative)
+        if column is None or column > 1:
+            column = 0
+        tables = parse_tables(pages, column=column)
         llm_lines = await extract_structured(pages, doc.period_label or "", column=column)
         result = reconcile(tables, llm_lines)
         proposal = build_proposal(result)
