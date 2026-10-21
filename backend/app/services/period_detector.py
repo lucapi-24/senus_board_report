@@ -128,6 +128,11 @@ def detect_periods(pages: List[Tuple[int, str]]) -> List[PeriodCandidate]:
             end_d = _try_parse_date(token)
             if not end_d:
                 continue
+            # Exclude future-looking periods ("year ending X") - only accept
+            # periods that have already ended ("year ended X", "six months ended X")
+            window_before = t[max(0, m.start() - 80):m.start()].lower()
+            if 'ending' in window_before and 'ended' not in window_before:
+                continue
             scope = _scope_for(t, m.start())
             start_d = _infer_start(end_d, scope)
             label = _label_for(end_d, scope)
