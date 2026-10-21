@@ -175,17 +175,6 @@ def extract_from_text(full_text: str, column: int = 0, pages=None) -> Dict[str, 
                     break
 
     _normalise_loss_signs(result)
-
-    # EBITDA is not printed in the document; compute it from components:
-    # Operating result + Interest payable + Depreciation
-    cf = result["cash_flow"]
-    if "Loss for the period" in cf:
-        cf["EBITDA"] = (
-            cf.get("Loss for the period", Decimal("0"))
-            + cf.get("Interest payable", Decimal("0"))
-            + cf.get("Depreciation", Decimal("0"))
-        )
-
     return result
 
 

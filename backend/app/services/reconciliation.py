@@ -72,7 +72,6 @@ CANONICAL: Dict[str, List[str]] = {
         "Net change in cash",
         "Cash at start",
         "Cash at end",
-        "EBITDA",
     ],
 }
 

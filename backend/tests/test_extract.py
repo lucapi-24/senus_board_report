@@ -84,7 +84,8 @@ def test_balance_sheet_wrapped_and_suffixed_labels():
 
 def test_cash_flow_wrapped_label_and_ebitda_subtotal():
     assert result["cash_flow"]["Net change in cash"] == Decimal("595055")
-    assert result["cash_flow"]["EBITDA"] == Decimal("-473739")
+    # EBITDA is not printed in the document; it is computed only in compute_kpis
+    assert "EBITDA" not in result["cash_flow"]
 
 
 def test_comparative_column_reads_prior_period_figures():
@@ -98,7 +99,8 @@ def test_comparative_column_subtotals_and_cash():
     assert comparative["balance_sheet"]["Total Fixed Assets"] == Decimal("65363")
     assert comparative["balance_sheet"]["Total Current Assets"] == Decimal("283533")
     assert comparative["cash_flow"]["Depreciation"] == Decimal("10016")
-    assert comparative["cash_flow"]["EBITDA"] == Decimal("-395561")
+    # EBITDA is not printed in the document; it is computed only in compute_kpis
+    assert "EBITDA" not in comparative["cash_flow"]
 
 
 def test_comparative_column_omits_values_absent_from_prior_year():
