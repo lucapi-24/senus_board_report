@@ -259,20 +259,60 @@ def find_matching_period(doc_label: Optional[str], doc_start, doc_end, pages: Li
 
     return False, f"Dates not found in document. Detected periods: {details_str}", cands
 
+def _detect_table_column_headers(pages: List[Tuple[int, str]]) -> List[Tuple[date, date]]:
+    """Detect table column header dates by finding lines that contain multiple
+    dates side by side (typical of financial statement column headers).
+
+    Returns a list of (start_date, end_date) tuples sorted left-to-right
+    (column 0 = leftmost = most recent).
+    """
+    header_periods: List[Tuple[date, date]] = []
+    seen = set()
+
+    for pnum, text in pages:
+        if not text:
+            continue
+        # Find all dates on each line
+        for line in text.split("\n"):
+            line_dates: List[date] = []
+            for m in DATE_TOKEN_RE.finditer(line):
+                d = _try_parse_date(m.group(0))
+                if d and _is_period_end(d):
+                    line_dates.append(d)
+            # A table header line has 2+ dates side by side
+            if len(line_dates) >= 2:
+                # Sort descending (leftmost = most recent)
+                line_dates.sort(reverse=True)
+                for d in line_dates:
+                    start_d = _infer_start(d, "six months")
+                    if start_d:
+                        key = (start_d, d)
+                        if key not in seen:
+                            seen.add(key)
+                            header_periods.append(key)
+
+    return header_periods
+
+
 def period_to_column_map(pages: List[Tuple[int, str]]) -> Dict[Tuple[date, date], int]:
     """Map each detected (start_date, end_date) to a table column number.
 
-    Only periods that have a label (e.g. HY2026, FY2025) AND end on a
-    plausible period-end date (day >= 28) are considered. Publication dates
-    (e.g. 19 March 2026) are excluded because their day is < 28.
+    Uses table header rows (lines with multiple dates side by side) to
+    identify which period corresponds to which column. Falls back to
+    sorting all labeled period-end dates by end_date descending if no
+    table headers are found.
 
-    Columns are assigned left-to-right by end_date descending: the most recent
-    labeled period gets column 0, the next most recent gets column 1, etc.
+    Publication dates (day < 28) are excluded.
     """
+    # First try table header detection
+    header_periods = _detect_table_column_headers(pages)
+    if header_periods:
+        return {key: idx for idx, key in enumerate(header_periods)}
+
+    # Fallback: sort all labeled period-end dates by end_date descending
     cands = detect_periods(pages)
     dated = [(c.start_date, c.end_date) for c in cands
              if c.start_date and c.end_date and c.label and _is_period_end(c.end_date)]
-    # Deduplicate
     seen = set()
     unique = []
     for sd, ed in dated:
@@ -280,7 +320,6 @@ def period_to_column_map(pages: List[Tuple[int, str]]) -> Dict[Tuple[date, date]
         if key not in seen:
             seen.add(key)
             unique.append(key)
-    # Sort by end_date descending (most recent first = column 0)
     unique.sort(key=lambda x: x[1], reverse=True)
     return {key: idx for idx, key in enumerate(unique)}
 
