@@ -1611,8 +1611,12 @@
 
 .review-table {
   width: 100%;
-  border-collapse: collapse;
+  border-collapse: separate;
+  border-spacing: 0;
   font-size: 0.875rem;
+  border: 0.063rem solid var(--senus-border);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
 }
 
 .review-table th {
@@ -1621,8 +1625,10 @@
   text-transform: uppercase;
   letter-spacing: 0.04em;
   color: var(--senus-text-muted);
-  padding: 0.5rem 0.75rem;
+  padding: 0.625rem 0.75rem;
   border-bottom: 0.063rem solid var(--senus-border);
+  background: var(--senus-surface-alt);
+  min-height: 2.5rem;
 }
 
 .review-table th.num,
@@ -1661,12 +1667,17 @@
 }
 
 .review-table td {
-  padding: 0.563rem 0.75rem;
+  padding: 0.75rem 0.75rem;
   border-bottom: 0.063rem solid var(--senus-border);
+  min-height: 3rem;
 }
 
 .review-table td:last-child {
-  padding: 0.563rem 0.5rem;
+  padding: 0.75rem 0.5rem;
+}
+
+.review-table tr:last-child td {
+  border-bottom: none;
 }
 
 .review-table tr.is-flagged {
