@@ -94,10 +94,6 @@ def _scope_for(text: str, pos: int) -> str:
 
 def _label_for(end: date, scope: str) -> Optional[str]:
     sl = scope.lower()
-    # Only label dates that appear in a period-ending context ("ended X"),
-    # not publication dates or other standalone dates.
-    if 'ended' not in sl:
-        return None
     is_six = 'six months' in sl or '6 months' in sl or 'half' in sl
     if is_six:
         if end.month == 12:
@@ -110,6 +106,11 @@ def _label_for(end: date, scope: str) -> Optional[str]:
         if end.month == 6:
             return f"FY{end.year}"
     return None
+
+def _is_period_end(end: date) -> bool:
+    """Heuristic: period-end dates are typically the last day of a month
+    (day >= 28), while publication/admission dates can be any day."""
+    return end.day >= 28
 
 def detect_periods(pages: List[Tuple[int, str]]) -> List[PeriodCandidate]:
     """Detect all period candidates in the document using regex/dateutil.
@@ -261,16 +262,16 @@ def find_matching_period(doc_label: Optional[str], doc_start, doc_end, pages: Li
 def period_to_column_map(pages: List[Tuple[int, str]]) -> Dict[Tuple[date, date], int]:
     """Map each detected (start_date, end_date) to a table column number.
 
-    Only periods that have a label (e.g. HY2026, FY2025) are considered — bare
-    dates without a label (publication dates, admission dates, etc.) are ignored.
+    Only periods that have a label (e.g. HY2026, FY2025) AND end on a
+    plausible period-end date (day >= 28) are considered. Publication dates
+    (e.g. 19 March 2026) are excluded because their day is < 28.
 
     Columns are assigned left-to-right by end_date descending: the most recent
-    labeled period gets column 0, the next most recent gets column 1, etc. This
-    matches the typical financial-statement layout where the current period is
-    the leftmost column and comparatives follow to the right.
+    labeled period gets column 0, the next most recent gets column 1, etc.
     """
     cands = detect_periods(pages)
-    dated = [(c.start_date, c.end_date) for c in cands if c.start_date and c.end_date and c.label]
+    dated = [(c.start_date, c.end_date) for c in cands
+             if c.start_date and c.end_date and c.label and _is_period_end(c.end_date)]
     # Deduplicate
     seen = set()
     unique = []
