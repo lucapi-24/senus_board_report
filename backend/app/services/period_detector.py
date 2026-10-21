@@ -129,33 +129,28 @@ def detect_periods(pages: List[Tuple[int, str]]) -> List[PeriodCandidate]:
     return dedup
 
 def find_matching_period(doc_label: Optional[str], doc_start, doc_end, pages: List[Tuple[int, str]]):
-    """Check whether the user-submitted label/dates exist in the document.
+    """Check whether the user-submitted dates exist in the document.
 
+    The label is intentionally NOT compared -- it's just a user-chosen name.
+    Only start_date/end_date must exist in the document.
     Returns (ok, message, details) where details lists all detected periods.
     """
     cands = detect_periods(pages)
 
-    # Collect all detected end dates and labels
+    # Collect all detected end dates
     detected_dates = [(c.label, c.start_date, c.end_date) for c in cands if c.end_date]
-    detected_labels = [c.label for c in cands if c.label]
 
     # Check if user's dates match any detected date
     date_matched = False
+    matched_label = None
     for label, start_d, end_d in detected_dates:
         if doc_start and doc_end and start_d == doc_start and end_d == doc_end:
             date_matched = True
+            matched_label = label
             break
 
-    # Check if user's label matches any detected label
-    label_matched = False
-    if doc_label:
-        for lbl in detected_labels:
-            if lbl and lbl.upper() == doc_label.upper():
-                label_matched = True
-                break
-
-    if date_matched and (not doc_label or label_matched):
-        return True, f"Period {doc_label} ({doc_start} to {doc_end}) found in document.", cands
+    if date_matched:
+        return True, f"Period ({doc_start} to {doc_end}) found in document.", cands
 
     # Build helpful error message
     details = []
@@ -163,16 +158,14 @@ def find_matching_period(doc_label: Optional[str], doc_start, doc_end, pages: Li
         details.append(f"{label or 'unknown'}: {start_d} to {end_d}")
     details_str = "; ".join(details) if details else "no dates detected"
 
-    msg_parts = [f"Dates not found in document. Detected periods: {details_str}"]
-    if doc_label and not label_matched:
-        msg_parts.append(f"Label '{doc_label}' not found in document.")
-    return False, " ".join(msg_parts), cands
+    return False, f"Dates not found in document. Detected periods: {details_str}", cands
 
 def validate_against(doc_label: Optional[str], doc_start, doc_end, pages: List[Tuple[int, str]], min_conf: float = 70.0):
-    """Validate user-submitted label/dates against detected periods in the document.
+    """Validate user-submitted dates against periods found in the document.
 
-    Returns (ok, message, candidates). ok=True means the submitted period
-    was found in the document and processing can proceed.
+    The label is intentionally NOT compared -- it's just a user-chosen name.
+    Only start_date/end_date must exist in the document.
+    Returns (ok, message, candidates).
     """
     ok, msg, cands = find_matching_period(doc_label, doc_start, doc_end, pages)
     return ok, msg, cands
