@@ -174,7 +174,30 @@ def extract_from_text(full_text: str, column: int = 0, pages=None) -> Dict[str, 
                         result["provenance"]["cash_flow"][key] = page
                     break
 
+    _normalise_loss_signs(result)
+
+    # EBITDA is not printed in the document; compute it from components:
+    # Operating result + Interest payable + Depreciation
+    cf = result["cash_flow"]
+    if "Loss for the period" in cf:
+        cf["EBITDA"] = (
+            cf.get("Loss for the period", Decimal("0"))
+            + cf.get("Interest payable", Decimal("0"))
+            + cf.get("Depreciation", Decimal("0"))
+        )
+
     return result
+
+
+def _normalise_loss_signs(result: Dict[str, Any]) -> None:
+    """Normalise loss line items to negative values as printed in the document."""
+    for key in ("Group operating loss", "Loss before taxation", "Loss for the period"):
+        if key in result["pnl"] and result["pnl"][key] > 0:
+            result["pnl"][key] = -result["pnl"][key]
+    # Cash flow also carries Loss for the period; normalise it too so derived
+    # subtotals (EBITDA) compute correctly.
+    if "Loss for the period" in result["cash_flow"] and result["cash_flow"]["Loss for the period"] > 0:
+        result["cash_flow"]["Loss for the period"] = -result["cash_flow"]["Loss for the period"]
 
 
 async def extract_narrative_insights(full_text: str, period_label: str) -> Dict[str, str]:
@@ -264,7 +287,7 @@ def compute_kpis(pnl: Dict, bs: Dict, cf: Dict) -> Dict[str, float]:
     # Compute EBITDA if not present in document
     ebitda = f(cf, "EBITDA")
     if ebitda == 0:
-        ebitda = operating_loss + interest + depreciation
+        ebitda = operating_loss + depreciation
     ebit = operating_loss  # operating loss used as EBIT proxy
     net_cash_ops = f(cf, "Net cash from operations")
     capex = f(cf, "Capex")
