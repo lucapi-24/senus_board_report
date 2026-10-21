@@ -30,6 +30,8 @@ from app.schemas.financial import (
     KPIResponse,
     FinancialSummary,
     AIInsight,
+    ChatRequest,
+    ChatResponse,
     ValidationResponse,
 )
 from app.services import lifecycle
@@ -141,6 +143,17 @@ async def get_ai_insights(
     """Get AI-generated insights for a period"""
     from app.services.ai_insights import generate_insights
     return await generate_insights(period_label, db)
+
+
+@router.post("/insights/chat", response_model=ChatResponse)
+async def chat_with_document(
+    request: ChatRequest,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Chat with AI about a specific period's financial document."""
+    from app.services.ai_insights import chat_with_document
+    return await chat_with_document(request, db)
 
 
 @router.get("/validations/{period_label}", response_model=List[ValidationResponse])

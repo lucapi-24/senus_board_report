@@ -23,6 +23,8 @@ import {
   Activity,
   Sparkles,
   RefreshCw,
+  MessageCircle,
+  Send,
 } from 'lucide-react'
 import {
   api,
@@ -99,19 +101,39 @@ export function Dashboard({ summary, selected, onSelect }: DashboardProps) {
   const [insights, setInsights] = useState<AIInsight[]>([])
   const [insightsLoading, setInsightsLoading] = useState(false)
 
-  useEffect(() => {
-    if (!selected) return
-    let active = true
-    api
-      .periodDetail(selected)
-      .then((d) => {
-        if (active) setDetail(d)
+  // Chat state
+  const [chatMessages, setChatMessages] = useState<{ role: string; content: string }[]>([])
+  const [chatInput, setChatInput] = useState('')
+  const [chatLoading, setChatLoading] = useState(false)
+
+  const handleChatSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!chatInput.trim() || !selected) return
+
+    const userMessage = { role: 'user', content: chatInput }
+    setChatMessages((prev) => [...prev, userMessage])
+    setChatInput('')
+    setChatLoading(true)
+
+    try {
+      const response = await api.chatWithDocument({
+        message: chatInput,
+        period_label: selected,
+        history: chatMessages,
       })
-      .catch(() => undefined)
-    return () => {
-      active = false
+      setChatMessages((prev) => [
+        ...prev,
+        { role: 'assistant', content: response.message },
+      ])
+    } catch {
+      setChatMessages((prev) => [
+        ...prev,
+        { role: 'assistant', content: 'Sorry, I could not reach the AI service. Please try again.' },
+      ])
+    } finally {
+      setChatLoading(false)
     }
-  }, [selected])
+  }
 
   const loadInsights = () => {
     if (!selected) return
@@ -126,9 +148,23 @@ export function Dashboard({ summary, selected, onSelect }: DashboardProps) {
   }
 
   useEffect(() => {
+    if (!selected) return
+    let active = true
+    api
+      .periodDetail(selected)
+      .then((d) => {
+        if (active) setDetail(d)
+      })
+      .catch(() => undefined)
+    return () => {
+      active = false
+    }
+  }, [selected])
+
+  useEffect(() => {
     setInsights([])
+    setChatMessages([])
     loadInsights()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selected])
 
   const current = useMemo(
@@ -725,6 +761,66 @@ export function Dashboard({ summary, selected, onSelect }: DashboardProps) {
               ))}
             </div>
           )}
+        </section>
+
+        {/* AI chat */}
+        <section className="insights chat">
+          <div className="insights__head">
+            <div className="insights__title">
+              <span className="insights__badge">
+                <MessageCircle size={16} /> Ask AI
+              </span>
+              <h2>Ask About {current?.period.label}</h2>
+              <p>Ask questions about the financials. Answers are grounded in the source document.</p>
+            </div>
+          </div>
+          <div className="chat__messages">
+            {chatMessages.map((m, i) => (
+              <div
+                key={i}
+                className={`chat__message ${m.role === 'user' ? 'is-user' : 'is-assistant'}`}
+              >
+                {m.role === 'user' ? (
+                  <>
+                    <span className="chat__who">You</span>
+                    <p className="chat__text">{m.content}</p>
+                  </>
+                ) : (
+                  <>
+                    <span className="chat__who">AI</span>
+                    <p className="chat__text">{m.content}</p>
+                  </>
+                )}
+              </div>
+            ))}
+            {chatLoading && (
+              <div className="chat__message is-assistant">
+                <span className="chat__who">AI</span>
+                <p className="chat__text">Thinking…</p>
+              </div>
+            )}
+          </div>
+          <form className="chat__form" onSubmit={handleChatSubmit}>
+            <input
+              type="text"
+              className="chat__input"
+              placeholder="Ask about revenue, costs, cash runway, or any figure…"
+              value={chatInput}
+              onChange={(e) => setChatInput(e.target.value)}
+              disabled={chatLoading || !selected}
+            />
+            <button
+              type="submit"
+              className="btn btn--primary btn--small"
+              disabled={chatLoading || !selected || !chatInput.trim()}
+            >
+              <Send size={16} />
+            </button>
+          </form>
+          <p className="chat__note">
+            Answers are generated from the extracted financial figures and document text. Verify
+            important figures against the source document before making decisions.
+          </p>
         </section>
       </div>
     </div>

@@ -196,6 +196,22 @@ export const api = {
   periodDetail: (label: string) => get<PeriodDetail>(`/api/periods/${label}`),
   kpis: (label: string) => get<KPIValue[]>(`/api/kpis/${label}`),
   insights: (label: string) => get<AIInsight[]>(`/api/insights/${label}`),
+  chatWithDocument: async (body: {
+    message: string
+    period_label: string
+    history: { role: string; content: string }[]
+  }) => {
+    const res = await fetch(`${API_BASE}/api/insights/chat`, {
+      method: 'POST',
+      headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    })
+    if (!res.ok) {
+      onUnauthorized(res.status)
+      throw new Error(await res.text() || 'Chat failed')
+    }
+    return res.json()
+  },
   documents: () => get<DocumentSummary[]>('/api/documents'),
   document: (id: number) => get<DocumentDetail>(`/api/documents/${id}`),
   uploadDocument: async (file: File, fields: UploadFields) => {

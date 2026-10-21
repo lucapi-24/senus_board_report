@@ -89,6 +89,22 @@ class AIInsight(BaseModel):
     confidence: float
 
 
+class ChatMessage(BaseModel):
+    role: Literal["user", "assistant"]
+    content: str
+
+
+class ChatRequest(BaseModel):
+    message: str
+    period_label: str
+    history: List[ChatMessage] = Field(default_factory=list)
+
+
+class ChatResponse(BaseModel):
+    message: str
+    sources: List[str] = Field(default_factory=list)
+
+
 class ValidationResponse(BaseModel):
     id: int
     rule: str

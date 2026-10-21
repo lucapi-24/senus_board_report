@@ -1,10 +1,10 @@
-from typing import List
+from typing import List, Tuple, Optional
 from decimal import Decimal
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
-from app.models.financial import Period, PnLItem, BalanceSheetItem, KPI
-from app.schemas.financial import AIInsight
+from app.models.financial import Period, PnLItem, BalanceSheetItem, CashFlowItem, KPI, Document
+from app.schemas.financial import AIInsight, ChatRequest, ChatResponse
 from app.core.config import settings
 from openai import AsyncOpenAI
 
@@ -30,6 +30,7 @@ async def generate_insights(period_label: str, db: AsyncSession) -> List[AIInsig
         .options(
             selectinload(Period.pnl_items),
             selectinload(Period.bs_items),
+            selectinload(Period.cf_items),
             selectinload(Period.kpis),
         )
         .where(Period.label == period_label)
@@ -40,6 +41,7 @@ async def generate_insights(period_label: str, db: AsyncSession) -> List[AIInsig
 
     pnl = {item.line_item: float(item.value_eur) for item in period.pnl_items}
     bs = {item.line_item: float(item.value_eur) for item in period.bs_items}
+    cf = {item.line_item: float(item.value_eur) for item in period.cf_items}
     kpis = {k.metric: float(k.value) for k in period.kpis}
 
     cash = bs.get("Cash and cash equivalents", bs.get("Cash and bank balances", 0))
@@ -165,3 +167,147 @@ KPIs:
         return insights or [AIInsight(section="AI", insight="No insights returned.", confidence=0.0)]
     except Exception as e:
         return [AIInsight(section="AI Error", insight=f"Failed to generate insights: {str(e)}", confidence=0.0)]
+
+
+async def chat_with_document(
+    request: ChatRequest,
+    db: AsyncSession,
+) -> ChatResponse:
+    """Chat with AI about a specific period's financial document.
+
+    Uses the period's financial data + the raw document text as context so the
+    CEO can ask specific questions about the figures.
+    """
+    if not client:
+        return ChatResponse(
+            message="Groq API key not configured. Set GROQ_API_KEY environment variable.",
+            sources=[],
+        )
+
+    # Fetch period + document
+    result = await db.execute(
+        select(Period)
+        .options(
+            selectinload(Period.pnl_items),
+            selectinload(Period.bs_items),
+            selectinload(Period.cf_items),
+            selectinload(Period.kpis),
+            selectinload(Period.source_document),
+        )
+        .where(Period.label == request.period_label)
+    )
+    period = result.scalar_one_or_none()
+    if not period:
+        return ChatResponse(
+            message=f"Period '{request.period_label}' not found.",
+            sources=[],
+        )
+
+    # Build financial context
+    pnl = {item.line_item: float(item.value_eur) for item in period.pnl_items}
+    bs = {item.line_item: float(item.value_eur) for item in period.bs_items}
+    cf = {item.line_item: float(item.value_eur) for item in period.cf_items}
+    kpis = {k.metric: float(k.value) for k in period.kpis}
+
+    doc = period.source_document
+    doc_text = ""
+    if doc and doc.raw_json:
+        try:
+            import json as _json
+            raw = _json.loads(doc.raw_json)
+            if isinstance(raw, dict):
+                # Extract narrative text from the extracted JSON
+                narrative = raw.get("narrative_insights", {})
+                if isinstance(narrative, dict):
+                    for _k, _v in narrative.items():
+                        if isinstance(_v, str):
+                            doc_text += f"{_k}: {_v}\n"
+        except Exception:
+            pass
+
+    # Build conversation history
+    messages: list[dict] = [
+        {
+            "role": "system",
+            "content": (
+                "You are a CFO-grade financial analyst answering questions about "
+                "Senus PLC's financial document. Use ONLY the financial data and "
+                "document text provided below. Every numeric claim must cite a "
+                "figure from the data or a page number from the document. "
+                "If something is not in the data, say it is not available. "
+                "Be concise, professional, and do not invent figures or events."
+            ),
+        },
+    ]
+
+    # Add financial summary
+    cash = bs.get("Cash and cash equivalents", bs.get("Cash and bank balances", 0))
+    total_creditors = abs(bs.get("Creditors < 1yr", 0)) + abs(bs.get("Creditors > 1yr", 0))
+    equity = bs.get("Equity") or bs.get("Net Assets", 0)
+
+    fin_context = f"""FINANCIAL DATA ({period.label}):
+P&L:
+- Revenue: €{pnl.get('Revenue', pnl.get('Turnover', 0)):,.0f}
+- Cost of Sales: €{pnl.get('Cost of sales', 0):,.0f}
+- Gross Profit: €{pnl.get('Gross Profit', 0):,.0f}
+- Admin Expenses: €{pnl.get('Administrative expenses', 0):,.0f}
+- Operating Loss: €{pnl.get('Group operating loss', pnl.get('Operating loss', 0)):,.0f}
+- Loss Before Taxation: €{pnl.get('Loss before taxation', 0):,.0f}
+- Loss for the Period: €{pnl.get('Loss for the period', 0):,.0f}
+
+Balance Sheet:
+- Cash: €{cash:,.0f}
+- Total Creditors: €{total_creditors:,.0f}
+- Net Current Assets: €{bs.get('Net Current Assets', 0):,.0f}
+- Equity / Net Assets: €{equity:,.0f}
+
+KPIs:
+- Gross Margin: {kpis.get('gross_margin', 0):.1f}%
+- Net Margin: {kpis.get('net_margin', 0):.1f}%
+- Cash Runway: {kpis.get('runway_months', 0):.1f} months
+- Current Ratio: {kpis.get('current_ratio', 0):.2f}x
+- Equity Ratio: {kpis.get('equity_ratio', 0):.1f}%
+- ROE: {kpis.get('roe', 0):.1f}%
+- ROCE: {kpis.get('roce', 0):.1f}%
+
+DOCUMENT TEXT:
+{doc_text[:3000] if doc_text else '(No narrative text extracted)'}"""
+
+    messages.append({"role": "system", "content": fin_context})
+
+    # Add conversation history
+    for m in request.history:
+        messages.append({"role": m.role, "content": m.content})
+
+    # Add current user message
+    messages.append({"role": "user", "content": request.message})
+
+    import asyncio, json
+
+    response = None
+    last_error: Exception | None = None
+    for attempt in range(3):
+        try:
+            response = await client.chat.completions.create(
+                model=settings.GROQ_MODEL,
+                messages=messages,
+                temperature=0.2,
+                max_tokens=1000,
+            )
+            break
+        except Exception as exc:
+            last_error = exc
+            await asyncio.sleep(1.5 * (attempt + 1))
+    if response is None:
+        raise last_error if last_error else RuntimeError("No response from model")
+
+    content = response.choices[0].message.content or "No response generated."
+
+    # Extract cited pages from content (e.g. [p.5])
+    import re
+    cited_pages = sorted(set(re.findall(r"\[p\.(\d+)\]", content)))
+
+    return ChatResponse(
+        message=content,
+        sources=[f"Page {p}" for p in cited_pages],
+    )
