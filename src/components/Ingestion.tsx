@@ -203,12 +203,14 @@ export function Ingestion({ role, onDataChanged }: { role?: string; onDataChange
 
   const handleEditCancel = () => {
     setEditingDocId(null)
-    const doc = documents.find((d) => d.id === id)
-    if (doc) {
-      setEditLabel(doc.period_label ?? '')
-      setEditStart(doc.period_start ?? '')
-      setEditEnd(doc.period_end ?? '')
-      setEditDocType(doc.doc_type ?? 'interim_results')
+    if (editingDocId) {
+      const doc = documents.find((d) => d.id === editingDocId)
+      if (doc) {
+        setEditLabel(doc.period_label ?? '')
+        setEditStart(doc.period_start ?? '')
+        setEditEnd(doc.period_end ?? '')
+        setEditDocType(doc.doc_type ?? 'interim_results')
+      }
     }
   }
 
@@ -418,7 +420,6 @@ export function Ingestion({ role, onDataChanged }: { role?: string; onDataChange
                       </>
                     )}
                   </div>
-                  </div>
                 </li>
               ))}
             </ul>
@@ -430,7 +431,7 @@ export function Ingestion({ role, onDataChanged }: { role?: string; onDataChange
         {detail && !detail.review?.summary && (
           <section className="panel">
             <div className="callout callout--info">
-              Este documento aún no se ha procesado. Pulsa <strong>Process</strong> para extraer los datos antes de revisarlos.
+              This document has not been processed yet. Press <strong>Process</strong> to extract the data before reviewing.
             </div>
           </section>
         )}
