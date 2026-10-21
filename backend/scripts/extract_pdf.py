@@ -174,32 +174,6 @@ def extract_from_text(full_text: str, column: int = 0, pages=None) -> Dict[str, 
                         result["provenance"]["cash_flow"][key] = page
                     break
 
-    # Derived subtotals: prefer the total stated in the source; only fall back
-    # to summing the components when the statement doesn't print a total.
-    bs = result["balance_sheet"]
-    zero = Decimal("0")
-    if "Total Fixed Assets" not in bs and ("Goodwill" in bs or "Tangible Assets" in bs):
-        bs["Total Fixed Assets"] = (
-            bs.get("Goodwill", zero)
-            + bs.get("Development Costs", zero)
-            + bs.get("Tangible Assets", zero)
-        )
-    if "Total Current Assets" not in bs and ("Debtors" in bs or "Cash and cash equivalents" in bs):
-        bs["Total Current Assets"] = bs.get("Debtors", zero) + bs.get("Cash and cash equivalents", zero)
-
-    cf = result["cash_flow"]
-    if "Loss for the period" in cf:
-        cf["EBITDA"] = (
-            cf.get("Loss for the period", zero)
-            + cf.get("Interest payable", zero)
-            + cf.get("Depreciation", zero)
-        )
-
-    # Normalise loss line items to negative (source presents costs/losses as positive)
-    for key in ("Group operating loss", "Loss before taxation", "Loss for the period"):
-        if key in result["pnl"] and result["pnl"][key] > 0:
-            result["pnl"][key] = -result["pnl"][key]
-
     return result
 
 
@@ -245,7 +219,12 @@ TEXT (page markers [p.N] indicate the source page):
 
 
 def compute_kpis(pnl: Dict, bs: Dict, cf: Dict) -> Dict[str, float]:
-    """Compute derived KPIs using the reference-document methodology."""
+    """Compute derived KPIs using the reference-document methodology.
+
+    Only uses values that were extracted from the document. Derived subtotals
+    (Total Fixed Assets, Total Current Assets, EBITDA) are computed here from
+    the extracted components, not stored during extraction.
+    """
     kpis: Dict[str, float] = {}
 
     def f(source: Dict, key: str) -> float:
@@ -255,20 +234,38 @@ def compute_kpis(pnl: Dict, bs: Dict, cf: Dict) -> Dict[str, float]:
     gross_profit = f(pnl, "Gross Profit")
     admin_exp = f(pnl, "Administrative expenses")
     net_loss = f(pnl, "Loss for the period")
-    operating_loss = f(pnl, "Group operating loss")  # stored negative
+    operating_loss = f(pnl, "Group operating loss")
+    loss_before_tax = f(pnl, "Loss before taxation")
     interest = f(pnl, "Interest payable")
 
+    # Force losses to be negative for calculations
+    if operating_loss > 0:
+        operating_loss = -operating_loss
+    if net_loss > 0:
+        net_loss = -net_loss
+    if loss_before_tax > 0:
+        loss_before_tax = -loss_before_tax
+
     cash = f(bs, "Cash and cash equivalents")
-    creditors_short = f(bs, "Creditors < 1yr")            # negative
-    creditors_long = f(bs, "Creditors > 1yr")             # negative
-    contingent = f(bs, "Contingent consideration")        # negative
+    creditors_short = f(bs, "Creditors < 1yr")
+    creditors_long = f(bs, "Creditors > 1yr")
+    contingent = f(bs, "Contingent consideration")
     equity = f(bs, "Equity") or f(bs, "Net Assets")
+
+    # Compute derived subtotals from components if not present in document
     total_fixed_assets = f(bs, "Total Fixed Assets")
+    if total_fixed_assets == 0:
+        total_fixed_assets = f(bs, "Goodwill") + f(bs, "Development Costs") + f(bs, "Tangible Assets")
     total_current_assets = f(bs, "Total Current Assets")
+    if total_current_assets == 0:
+        total_current_assets = f(bs, "Debtors") + f(bs, "Cash and cash equivalents")
 
     depreciation = f(cf, "Depreciation")
-    ebitda = operating_loss + depreciation                # add back depreciation
-    ebit = operating_loss                                 # operating loss used as EBIT proxy
+    # Compute EBITDA if not present in document
+    ebitda = f(cf, "EBITDA")
+    if ebitda == 0:
+        ebitda = operating_loss + interest + depreciation
+    ebit = operating_loss  # operating loss used as EBIT proxy
     net_cash_ops = f(cf, "Net cash from operations")
     capex = f(cf, "Capex")
     loan_repayments = f(cf, "Loan repayments")

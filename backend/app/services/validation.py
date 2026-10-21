@@ -61,6 +61,44 @@ def _num(source: Dict[str, Any], key: str) -> Optional[float]:
         return None
 
 
+def _derived_fixed_assets(bs: Dict[str, Any]) -> Optional[float]:
+    """Compute Total Fixed Assets from components if not stated."""
+    stated = _num(bs, "Total Fixed Assets")
+    if stated is not None:
+        return stated
+    goodwill = _num(bs, "Goodwill") or 0
+    dev_costs = _num(bs, "Development Costs") or 0
+    tangible = _num(bs, "Tangible Assets") or 0
+    total = goodwill + dev_costs + tangible
+    return total if total != 0 else None
+
+
+def _derived_current_assets(bs: Dict[str, Any]) -> Optional[float]:
+    """Compute Total Current Assets from components if not stated."""
+    stated = _num(bs, "Total Current Assets")
+    if stated is not None:
+        return stated
+    debtors = _num(bs, "Debtors") or 0
+    cash = _num(bs, "Cash and cash equivalents") or 0
+    total = debtors + cash
+    return total if total != 0 else None
+
+
+def _derived_ebitda(pnl: Dict[str, Any], cf: Dict[str, Any]) -> Optional[float]:
+    """Compute EBITDA from operating result + depreciation if not stated."""
+    stated = _num(cf, "EBITDA")
+    if stated is not None:
+        return stated
+    operating = _pick(pnl, "Group operating loss", "Operating loss")
+    depreciation = _num(cf, "Depreciation")
+    if operating is not None and depreciation is not None:
+        # Force losses to be negative for the calculation
+        if operating > 0:
+            operating = -operating
+        return operating + depreciation
+    return None
+
+
 def _pick(source: Dict[str, Any], *keys: str) -> Optional[float]:
     """First present-and-numeric value among ``keys``."""
     for key in keys:
@@ -87,8 +125,8 @@ def _checks(
         out.append(("revenue_minus_cogs_eq_gross_profit", "error", revenue - cogs, gross_profit))
 
     # 2. Total assets − Total liabilities = Equity
-    total_fixed = _num(bs, "Total Fixed Assets")
-    total_current = _num(bs, "Total Current Assets")
+    total_fixed = _derived_fixed_assets(bs)
+    total_current = _derived_current_assets(bs)
     equity = _pick(bs, "Equity", "Net Assets")
     if total_fixed is not None and total_current is not None and equity is not None:
         liabilities = sum(
@@ -101,7 +139,7 @@ def _checks(
     # 3. Operating result + Depreciation = EBITDA
     operating = _pick(pnl, "Group operating loss", "Operating loss")
     depreciation = _num(cf, "Depreciation")
-    ebitda = _num(cf, "EBITDA")
+    ebitda = _derived_ebitda(pnl, cf)
     if operating is not None and depreciation is not None and ebitda is not None:
         out.append(("operating_result_plus_depreciation_eq_ebitda", "error", operating + depreciation, ebitda))
 
