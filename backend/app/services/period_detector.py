@@ -11,7 +11,9 @@ from app.services.llm_extract import build_client, annotate_pages
 PERIOD_CODE_RE = re.compile(r"\b(HY|FY|H1|H2|Q[1-4])\s*(\d{4})\b", re.I)
 DATE_TOKEN_RE = re.compile(
     r"(\d{1,2}[-/\s](?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*[-/\s]\d{4})"
+    r"|(\d{1,2}[-/\s](?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*[-/\s]\d{2})"
     r"|(\d{1,2}[-/\s]\d{1,2}[-/\s]\d{4})"
+    r"|(\d{1,2}[-/\s]\d{1,2}[-/\s]\d{2})"
     r"|((?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{1,2},?\s+\d{4})"
     r"|(\d{4}[-/\s]\d{1,2}[-/\s]\d{1,2})",
     re.I,
