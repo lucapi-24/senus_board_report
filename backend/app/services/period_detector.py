@@ -5,13 +5,18 @@ from datetime import date
 from typing import List, Optional, Tuple
 
 PERIOD_CODE_RE = re.compile(r"\b(HY|FY|H1|H2|Q[1-4])\s*(\d{4})\b", re.I)
-END_RE = re.compile(
-    r"(?:for the|period ended|half year ended|year ended)?\s*"
-    r"(?:six months|6 months|year|12 months|twelve months|quarter|3 months)?\s*"
-    r"(?:ended\s+)?([0-9]{1,2})\s+([A-Za-z]{3,9})\s+([0-9]{4})",
+# Matches: 'for the six months ended 31 December 2025', 'period ended 31 December 2025',
+# '31 December 2025', '31-Dec-2025', 'December 31, 2025', '31/12/2025', etc.
+DATE_RE = re.compile(
+    r"(?:(?:for the|period ended|half year ended|year ended|for the year ended|"
+    r"six months ended|6 months ended)\s*)?"
+    r"(?:([0-9]{1,2})\s+([A-Za-z]{3,9})\s+([0-9]{4})"         # 31 December 2025
+    r"|([0-9]{1,2})-([A-Za-z]{3})-([0-9]{4})"                  # 31-Dec-2025
+    r"|([A-Za-z]{3,9})\s+([0-9]{1,2}),?\s*([0-9]{4})"          # December 31, 2025
+    r"|([0-9]{1,2})/([0-9]{1,2})/([0-9]{4})"                    # 31/12/2025
+    r")",
     re.I,
 )
-END_SCOPE_RE = re.compile(r"(six months|6 months|year|12 months|twelve months|quarter|3 months)", re.I)
 AS_AT_RE = re.compile(r"as at\s+([0-9]{1,2})\s+([A-Za-z]{3,9})\s+([0-9]{4})", re.I)
 COMPARATIVE_WORDS = ("comparative", "previous", "prior period", "prior year", "restated comparative")
 
@@ -30,9 +35,36 @@ class PeriodCandidate:
     source: str
     context: str
 
-def _parse_date(day: str, mon: str, yr: str) -> date:
-    m = MONTH_MAP.get(mon.lower()[:3], MONTH_MAP.get(mon.lower(), 0))
-    return date(int(yr), m, int(day))
+def _parse_date_parts(groups: Tuple) -> Optional[date]:
+    """Extract day, month, year from the various regex groups."""
+    # group 1-3: day mon year (31 December 2025)
+    # group 4-6: day-mon-year (31-Dec-2025)
+    # group 7-9: mon day year (December 31, 2025)
+    # group 10-12: dd/mm/yyyy (31/12/2025)
+    day = mon = yr = None
+    if groups[0] and groups[1] and groups[2]:
+        day, mon, yr = groups[0], groups[1], groups[2]
+    elif groups[3] and groups[4] and groups[5]:
+        day, mon, yr = groups[3], groups[4], groups[5]
+    elif groups[6] and groups[7] and groups[8]:
+        mon, day, yr = groups[6], groups[7], groups[8]
+    elif groups[9] and groups[10] and groups[11]:
+        day, mon_num, yr = groups[9], groups[10], groups[11]
+        mon = str(mon_num)  # numeric month
+    if not day or not mon or not yr:
+        return None
+    try:
+        d = int(day)
+        y = int(yr)
+        if mon.isdigit():
+            m = int(mon)
+        else:
+            m = MONTH_MAP.get(mon.lower()[:3], MONTH_MAP.get(mon.lower(), 0))
+        if not m:
+            return None
+        return date(y, m, d)
+    except (ValueError, OverflowError):
+        return None
 
 def _infer_start(end: date, scope: str) -> Optional[date]:
     s = scope.lower()
@@ -52,18 +84,22 @@ def _infer_start(end: date, scope: str) -> Optional[date]:
         return date(end.year - 1, 7, 1)
     if 'quarter' in s or '3 months' in s:
         return date(end.year, ((end.month - 1)//3)*3 + 1, 1)
-    return None
+    # Default: assume six months if we can't tell
+    if end.month == 12:
+        return date(end.year, 7, 1)
+    if end.month == 6:
+        return date(end.year, 1, 1)
+    return date(end.year - 1, 7, 1)
 
 def _scope_for(text: str, pos: int) -> str:
-    window = text[max(0, pos - 60):pos].lower()
+    window = text[max(0, pos - 80):pos].lower()
     if 'six months' in window or '6 months' in window or 'half year' in window:
         return 'six months'
-    if 'twelve months' in window or '12 months' in window or 'year' in window:
+    if 'twelve months' in window or '12 months' in window or 'full year' in window:
         return 'year'
     if 'quarter' in window or '3 months' in window:
         return 'quarter'
     return 'six months'
-
 
 def detect_periods(pages: List[Tuple[int, str]]) -> List[PeriodCandidate]:
     candidates: List[PeriodCandidate] = []
@@ -74,11 +110,9 @@ def detect_periods(pages: List[Tuple[int, str]]) -> List[PeriodCandidate]:
         tl = t.lower()
         ctx = t[:200]
         is_comp = any(w in tl for w in COMPARATIVE_WORDS)
-        for m in END_RE.finditer(t):
-            day, mon, yr = m.group(1), m.group(2), m.group(3)
-            try:
-                end_d = _parse_date(day, mon, yr)
-            except Exception:
+        for m in DATE_RE.finditer(t):
+            end_d = _parse_date_parts(m.groups())
+            if not end_d:
                 continue
             scope = _scope_for(t, m.start())
             start_d = _infer_start(end_d, scope)
@@ -96,16 +130,18 @@ def detect_periods(pages: List[Tuple[int, str]]) -> List[PeriodCandidate]:
             if is_year:
                 if end_d.month == 6:
                     label = f"FY{end_d.year}"
-            score = 60.0
+            score = 50.0
             if 'statement' in tl or 'income' in tl or 'balance' in tl or 'cash' in tl or 'consolidated' in tl:
                 score += 30
             if 'condensed' in tl or 'interim' in tl:
                 score += 15
+            if 'half year' in tl or 'interim results' in tl:
+                score += 10
             if is_comp:
                 score -= 80
             if score < 0:
                 score = 1
-            candidates.append(PeriodCandidate(label, start_d, end_d, score, pnum, 'end_statement', ctx))
+            candidates.append(PeriodCandidate(label, start_d, end_d, score, pnum, 'date_statement', ctx))
         for m in PERIOD_CODE_RE.finditer(t):
             kind, yr = m.group(1), m.group(2)
             label_c = f"{kind.upper()}{yr}"
@@ -137,7 +173,7 @@ def validate_against(doc_label: Optional[str], doc_start, doc_end, pages: List[T
     cands = detect_periods(pages)
     primary = pick_primary(cands)
     if primary is None:
-        return True, 'No period detected in document', cands
+        return True, 'No period detected in document. Please enter the period manually.', cands
     issues = []
     if doc_label and primary.label:
         if primary.label.upper() != doc_label.upper():
@@ -150,4 +186,5 @@ def validate_against(doc_label: Optional[str], doc_start, doc_end, pages: List[T
         return True, f"Matched {primary.label or 'period'} (score {primary.score:.1f})", cands
     if primary.score < min_conf:
         return True, 'Low confidence detection; proceeding', cands
-    return False, 'Dates not found in document; please check the period label and dates against the document content.', cands
+    detected = f"{primary.label or 'unknown'} {primary.start_date}-{primary.end_date} (score {primary.score:.1f})"
+    return False, f'Dates not found in document; please check the period label and dates against the document content. Detected: {detected}', cands
