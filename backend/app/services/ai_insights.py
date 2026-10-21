@@ -230,17 +230,17 @@ async def chat_with_document(
         {
             "role": "system",
             "content": (
-                "Eres un analista financiero senior que responde al CEO de Senus PLC. "
-                "Tu trabajo es responder preguntas SOBRE este documento financiero específico. "
-                "\n\nREGLAS DE ORO:\n"
-                "1. RESPUESTAS CORTAS Y DIRECTAS: Máximo 2-3 párrafos por respuesta. Sin listas largas de números.\n"
-                "2. CONTEXTO PRIMERO, NÚMEROS DESPUÉS: Explica qué significa la cifra antes de decirla. "
-                "   Mal: 'El revenue es 354,813€'. Bien: 'Los ingresos crecieron un 4% respecto al año anterior, alcanzando 354,813€.'\n"
-                "3. COMPARA CUANDO TENGA SENTIDO: Si el usuario pregunta sobre una cifra, compara con el periodo anterior si está disponible.\n"
-                "4. CITA PÁGINAS: Si la información viene de una página concreta del documento, añade [p.X] al final de la frase.\n"
-                "5. NO INVENTES: Si la información no está en los datos proporcionados, di 'No está disponible en este documento'.\n"
-                "6. ENFOQUE EJECUTIVO: Prioriza rentabilidad, caja y riesgos sobre detalle contable menor.\n"
-                "7. IDIOMA: Responde siempre en español.\n"
+                "You are a senior financial analyst answering questions for the CEO of Senus PLC. "
+                "Your job is to answer questions ONLY about this specific financial document. "
+                "\n\nGOLDEN RULES:\n"
+                "1. SHORT AND DIRECT ANSWERS: Maximum 2-3 paragraphs per response. No long lists of numbers.\n"
+                "2. CONTEXT FIRST, NUMBERS SECOND: Explain what the figure means before stating it. "
+                "   Bad: 'Revenue is 354,813€'. Good: 'Revenue grew 4% year-over-year, reaching 354,813€.'\n"
+                "3. COMPARE WHEN IT MAKES SENSE: If the user asks about a figure, compare with the prior period if available.\n"
+                "4. CITE PAGES: If the information comes from a specific page of the document, add [p.X] at the end of the sentence.\n"
+                "5. NO HALLUCINATIONS: If the information is not in the provided data, say 'Not available in this document'.\n"
+                "6. EXECUTIVE FOCUS: Prioritize profitability, cash and risks over minor accounting detail.\n"
+                "7. LANGUAGE: Always respond in English.\n"
             ),
         },
     ]
@@ -250,26 +250,26 @@ async def chat_with_document(
     total_creditors = abs(bs.get("Creditors < 1yr", 0)) + abs(bs.get("Creditors > 1yr", 0))
     equity = bs.get("Equity") or bs.get("Net Assets", 0)
 
-    fin_context = f"""DATOS FINANCIEROS DE REFERENCIA ({period.label}):
+    fin_context = f"""FINANCIAL DATA FOR REFERENCE ({period.label}):
 P&L:
-- Ingresos (Revenue/Turnover): €{pnl.get('Revenue', pnl.get('Turnover', 0)):,.0f}
-- Coste de ventas: €{pnl.get('Cost of sales', 0):,.0f}
-- Bruto: €{pnl.get('Gross Profit', 0):,.0f}
-- Gastos administrativos: €{pnl.get('Administrative expenses', 0):,.0f}
-- Pérdida operativa: €{pnl.get('Group operating loss', pnl.get('Operating loss', 0)):,.0f}
-- Pérdida del periodo: €{pnl.get('Loss for the period', 0):,.0f}
+- Revenue (Turnover): €{pnl.get('Revenue', pnl.get('Turnover', 0)):,.0f}
+- Cost of Sales: €{pnl.get('Cost of sales', 0):,.0f}
+- Gross Profit: €{pnl.get('Gross Profit', 0):,.0f}
+- Admin Expenses: €{pnl.get('Administrative expenses', 0):,.0f}
+- Operating Loss: €{pnl.get('Group operating loss', pnl.get('Operating loss', 0)):,.0f}
+- Loss for the Period: €{pnl.get('Loss for the period', 0):,.0f}
 
-Balance:
-- Caja: €{cash:,.0f}
-- Créditos totales: €{total_creditors:,.0f}
-- Activo corriente neto: €{bs.get('Net Current Assets', 0):,.0f}
-- Patrimonio neto: €{equity:,.0f}
+Balance Sheet:
+- Cash: €{cash:,.0f}
+- Total Creditors: €{total_creditors:,.0f}
+- Net Current Assets: €{bs.get('Net Current Assets', 0):,.0f}
+- Equity / Net Assets: €{equity:,.0f}
 
 KPIs:
-- Margen bruto: {kpis.get('gross_margin', 0):.1f}%
-- Margen neto: {kpis.get('net_margin', 0):.1f}%
-- Runway de caja: {kpis.get('runway_months', 0):.1f} meses
-- Ratio de liquidez corriente: {kpis.get('current_ratio', 0):.2f}x
+- Gross Margin: {kpis.get('gross_margin', 0):.1f}%
+- Net Margin: {kpis.get('net_margin', 0):.1f}%
+- Cash Runway: {kpis.get('runway_months', 0):.1f} months
+- Current Ratio: {kpis.get('current_ratio', 0):.2f}x
 - ROE: {kpis.get('roe', 0):.1f}%"""
 
     messages.append({"role": "system", "content": fin_context})
