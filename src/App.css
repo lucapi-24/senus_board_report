@@ -1616,22 +1616,16 @@
   table-layout: fixed;
 }
 
-.review-table th,
-.review-table td {
-  padding: 0.75rem;
-  border-bottom: 0.063rem solid var(--senus-border);
-  height: 3rem;
-  vertical-align: middle;
-  box-sizing: border-box;
-}
-
 .review-table th {
   text-align: left;
   font-size: 0.75rem;
   text-transform: uppercase;
   letter-spacing: 0.04em;
   color: var(--senus-text-muted);
+  padding: 0.75rem 0.75rem;
+  border-bottom: 0.063rem solid var(--senus-border);
   background: var(--senus-surface-alt);
+  vertical-align: middle;
 }
 
 .review-table th.num,
@@ -1639,33 +1633,24 @@
   text-align: right;
 }
 
+.review-table th:first-child { width: 30%; }
+.review-table th:nth-child(2) { width: 20%; }
+.review-table th:nth-child(3) { width: 14%; }
+.review-table th:nth-child(4) { width: 10%; }
+.review-table th:nth-child(5) { width: 10%; }
+
+.review-table td {
+  padding: 0.75rem 0.75rem;
+  border-bottom: 0.063rem solid var(--senus-border);
+  vertical-align: middle;
+}
+
+.review-table tr {
+  min-height: 3rem;
+}
+
 .review-table tr:last-child td {
   border-bottom: none;
-}
-
-.review-table th:first-child,
-.review-table td:first-child {
-  width: 30%;
-}
-
-.review-table th:nth-child(2),
-.review-table td:nth-child(2) {
-  width: 20%;
-}
-
-.review-table th:nth-child(3),
-.review-table td:nth-child(3) {
-  width: 14%;
-}
-
-.review-table th:nth-child(4),
-.review-table td:nth-child(4) {
-  width: 10%;
-}
-
-.review-table th:nth-child(5),
-.review-table td:nth-child(5) {
-  width: 10%;
 }
 
 .review-table tr.is-flagged {
