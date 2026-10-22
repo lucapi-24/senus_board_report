@@ -15,18 +15,6 @@ client = AsyncOpenAI(
 ) if settings.GROQ_API_KEY else None
 
 
-def _fmt(value: Optional[float], label: str = "") -> str:
-    if value is None:
-        return "—"
-    return f"€{value:,.0f}"
-
-
-def _pct(value: Optional[float], digits: int = 1) -> str:
-    if value is None:
-        return "—"
-    return f"{value:.{digits}}%"
-
-
 async def generate_insights(period_label: str, db: AsyncSession) -> List[AIInsight]:
     """Generate AI-powered financial insights for a period"""
     if not client:
@@ -188,7 +176,6 @@ async def compare_periods(request: PeriodCompareRequest, db: AsyncSession) -> Pe
             confidence=0.0,
         )
 
-    # Fetch both periods
     result_a = await db.execute(
         select(Period)
         .options(
@@ -235,6 +222,14 @@ async def compare_periods(request: PeriodCompareRequest, db: AsyncSession) -> Pe
     b_b = {item.line_item: float(item.value_eur) for item in period_b.bs_items}
     kpis_b = {k.metric: float(k.value) for k in period_b.kpis}
 
+    def _fmt_money(v: float) -> str:
+        return f"€{v:,.0f}"
+
+    def _pct_change(a_val: float, b_val: float) -> str:
+        if not a_val:
+            return "n/a"
+        return f"{((b_val - a_val) / abs(a_val)) * 100:+.1f}%"
+
     prompt = f"""You are a CFO-grade financial analyst comparing two periods for Senus PLC.
 
 PERIOD A: {request.period_label_a}
@@ -265,27 +260,15 @@ Balance Sheet:
 - Total Creditors: €{abs(b_b.get('Creditors < 1yr', 0)) + abs(b_b.get('Creditors > 1yr', 0)):,.0f}
 - Equity / Net Assets: €{b_b.get('Equity') or b_b.get('Net Assets', 0):,.0f}
 
-KPIs Comparison:
-| Metric | {request.period_label_a} | {request.period_label_b} | Change |
-|--------|--------------------------|--------------------------|--------|
-| Revenue | €{p_a.get('Revenue', p_a.get('Turnover', 0)):,.0f} | €{p_b.get('Revenue', p_b.get('Turnover', 0)):,.0f} | {((p_b.get('Revenue', p_b.get('Turnover', 0)) - p_a.get('Revenue', p_a.get('Turnover', 0))) / p_a.get('Revenue', p_a.get('Turnover', 0)) * 100 if p_a.get('Revenue', p_a.get('Turnover', 0)) else 0):+.1f}% |
-| Gross Profit | €{p_a.get('Gross Profit', 0):,.0f} | €{p_b.get('Gross Profit', 0):,.0f} | {((p_b.get('Gross Profit', 0) - p_a.get('Gross Profit', 0)) / p_a.get('Gross Profit', 0) * 100 if p_a.get('Gross Profit', 0) else 0):+.1f}% |
-| Admin Expenses | €{p_a.get('Administrative expenses', 0):,.0f} | €{p_b.get('Administrative expenses', 0):,.0f} | {((p_b.get('Administrative expenses', 0) - p_a.get('Administrative expenses', 0)) / p_a.get('Administrative expenses', 0) * 100 if p_a.get('Administrative expenses', 0) else 0):+.1f}% |
-| Operating Loss | €{p_a.get('Group operating loss', p_a.get('Operating loss', 0)):,.0f} | €{p_b.get('Group operating loss', p_b.get('Operating loss', 0)):,.0f} | {((p_b.get('Group operating loss', p_b.get('Operating loss', 0)) - p_a.get('Group operating loss', p_a.get('Operating loss', 0))) / abs(p_a.get('Group operating loss', p_a.get('Operating loss', 0))) * 100 if p_a.get('Group operating loss', p_a.get('Operating loss', 0)) else 0):+.1f}% |
-| Loss for Period | €{p_a.get('Loss for the period', 0):,.0f} | €{p_b.get('Loss for the period', 0):,.0f} | {((p_b.get('Loss for the period', 0) - p_a.get('Loss for the period', 0)) / abs(p_a.get('Loss for the period', 0)) * 100 if p_a.get('Loss for the period', 0) else 0):+.1f}% |
-| Cash | €{b_a.get('Cash and cash equivalents', b_a.get('Cash and bank balances', 0)):,.0f} | €{b_b.get('Cash and cash equivalents', b_b.get('Cash and bank balances', 0)):,.0f} | {((b_b.get('Cash and cash equivalents', b_b.get('Cash and bank balances', 0)) - b_a.get('Cash and cash equivalents', b_a.get('Cash and bank balances', 0))) / b_a.get('Cash and cash equivalents', b_a.get('Cash and bank balances', 0)) * 100 if b_a.get('Cash and cash equivalents', b_a.get('Cash and bank balances', 0)) else 0):+.1f}% |
+Write a concise executive summary (2-4 sentences) comparing the two periods. Focus on:
+- Revenue trend and margin change
+- Cost changes (administrative expenses)
+- Operating result trend
+- Cash position change
+- Key risks or positives for the board
 
-CONTEXT: You are comparing two reporting periods for Senus PLC. Period A is {request.period_label_a}, Period B is {request.period_label_b}.
-
-STRICT RULES:
-- Use ONLY the figures provided above. Never invent numbers.
-- Every numeric claim must match a figure above.
-- Express changes as percentages where meaningful.
-- Focus on what changed, why it matters, and what the Board should pay attention to.
-- Be concise, professional, and executive-level.
-
-Return JSON object with: insight (string), confidence (0-1).
-"""
+Use ONLY the figures above. Return ONLY JSON:
+{{"insight": "your comparison text here", "confidence": 0.95}}"""
 
     import asyncio
 
@@ -298,7 +281,7 @@ Return JSON object with: insight (string), confidence (0-1).
                     model=settings.GROQ_MODEL,
                     messages=[{"role": "user", "content": prompt}],
                     temperature=0.1,
-                    max_tokens=800,
+                    max_tokens=1000,
                     response_format={"type": "json_object"},
                 )
                 break

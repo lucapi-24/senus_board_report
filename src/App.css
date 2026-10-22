@@ -1852,3 +1852,96 @@
   border-radius: var(--radius-pill);
   white-space: nowrap;
 }
+
+/* ---------- Comparison selector ---------- */
+.compare__form {
+  display: flex;
+  gap: 1rem;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  margin-bottom: 1.5rem;
+}
+
+.compare__select {
+  display: flex;
+  flex-direction: column;
+  gap: 0.375rem;
+}
+
+.compare__select label {
+  font-size: 0.813rem;
+  font-weight: 600;
+  color: var(--senus-text-muted);
+}
+
+.compare__select select {
+  padding: 0.625rem 0.875rem;
+  border: 0.063rem solid var(--senus-border);
+  border-radius: var(--radius-sm);
+  font-size: 0.875rem;
+  color: var(--senus-text);
+  background: var(--senus-surface);
+  cursor: pointer;
+}
+
+.compare__select select:focus {
+  outline: none;
+  border-color: var(--senus-peach);
+}
+
+.compare__result {
+  margin-top: 1.5rem;
+}
+
+.compare__columns {
+  display: flex;
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+.compare__col {
+  flex: 1;
+  padding: 1rem;
+  background: var(--senus-surface-alt);
+  border-radius: var(--radius-sm);
+}
+
+.compare__col h3 {
+  font-size: 1rem;
+  font-weight: 700;
+  margin-bottom: 0.5rem;
+}
+
+.compare__col p {
+  font-size: 0.813rem;
+  color: var(--senus-text-muted);
+}
+
+.compare__col.compare__col--arrow {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.5rem;
+  color: var(--senus-peach);
+  font-weight: 700;
+}
+
+.compare__insight {
+  background: var(--senus-surface);
+  border: 0.063rem solid var(--senus-border);
+  border-radius: var(--radius-sm);
+  padding: 1rem;
+}
+
+.compare__insight p {
+  font-size: 0.875rem;
+  line-height: 1.6;
+  margin-bottom: 0.5rem;
+}
+
+.compare__insight .muted {
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+/* ---------- AI Chat ---------- */
