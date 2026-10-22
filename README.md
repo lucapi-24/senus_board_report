@@ -280,13 +280,3 @@ GET /api/metrics/catalog returns metadata for all derived KPIs (label, unit, cat
 
 See VERIFICATION_REPORT.md for ground-truth comparison against computed KPIs and the minimal fix to prevent cross-period contamination in the AI prompt.
 
-
-## Ingestion & review workflow
-
-1. **Upload** (admin): PDF uploaded via Documents UI, stored under ackend/data/uploads/.
-2. **Process** (admin): hybrid ingestion runs deterministic parser + LLM extraction; reconciliation produces a proposal with matched/flagged.
-3. **Review** (admin): confirm or correct flagged items; KPIs/validations recompute on change; audit trail recorded.
-4. **Publish** (admin): moves document/period to published.
-
-The ingestion/review UI (src/components/Ingestion.tsx) lets admins review per-statement, see confidence/source (regex vs LLM), and publish. Readers (viewer) have read-only access.
-

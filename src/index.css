@@ -22,7 +22,7 @@
   --senus-positive: #20948b;
 
   /* Layout */
-  --container-max: 1140px;
+  --container-max: 90vw;
   --header-height: 100px;
   --radius: 12px;
   --radius-sm: 8px;
@@ -115,7 +115,6 @@ button {
   width: 100%;
   max-width: var(--container-max);
   margin: 0 auto;
-  padding: 0 24px;
 }
 
 ::selection {
