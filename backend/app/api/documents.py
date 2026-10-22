@@ -325,6 +325,9 @@ async def list_document_periods(
         raise HTTPException(status_code=404, detail="Document not found")
     result = await db.execute(select(Period).where(Period.source_doc_id == document_id))
     return list(result.scalars().all())
+
+
+@router.delete("/{document_id}", status_code=204)
 async def delete_document(
     document_id: int,
     db: AsyncSession = Depends(get_db),
