@@ -232,9 +232,9 @@ export const api = {
   uploadDocument: async (file: File, fields: UploadFields) => {
     const form = new FormData()
     form.append('file', file)
-    form.append('period_label', fields.period_label)
-    form.append('start_date', fields.start_date)
-    form.append('end_date', fields.end_date)
+    if (fields.period_label) form.append('period_label', fields.period_label)
+    if (fields.start_date) form.append('start_date', fields.start_date)
+    if (fields.end_date) form.append('end_date', fields.end_date)
     if (fields.doc_type) form.append('doc_type', fields.doc_type)
     const res = await fetch(`${API_BASE}/api/documents`, {
       method: 'POST',
