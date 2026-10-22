@@ -1,10 +1,10 @@
-from typing import List, Tuple, Optional
+from typing import List, Optional
 from decimal import Decimal
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
-from app.models.financial import Period, PnLItem, BalanceSheetItem, CashFlowItem, KPI, Document
-from app.schemas.financial import AIInsight, ChatRequest, ChatResponse
+from app.models.financial import Period, PnLItem, BalanceSheetItem, CashFlowItem, KPI
+from app.schemas.financial import AIInsight, PeriodCompareRequest, PeriodCompareResponse
 from app.core.config import settings
 from openai import AsyncOpenAI
 
@@ -13,6 +13,18 @@ client = AsyncOpenAI(
     base_url=settings.GROQ_BASE_URL,
     api_key=settings.GROQ_API_KEY,
 ) if settings.GROQ_API_KEY else None
+
+
+def _fmt(value: Optional[float], label: str = "") -> str:
+    if value is None:
+        return "—"
+    return f"€{value:,.0f}"
+
+
+def _pct(value: Optional[float], digits: int = 1) -> str:
+    if value is None:
+        return "—"
+    return f"{value:.{digits}}%"
 
 
 async def generate_insights(period_label: str, db: AsyncSession) -> List[AIInsight]:
@@ -24,7 +36,6 @@ async def generate_insights(period_label: str, db: AsyncSession) -> List[AIInsig
             confidence=0.0
         )]
 
-    # Fetch financial data
     result = await db.execute(
         select(Period)
         .options(
@@ -59,7 +70,8 @@ P&L:
 - Gross Profit: €{pnl.get('Gross Profit', 0):,.0f}
 - Admin Expenses: €{pnl.get('Administrative expenses', 0):,.0f}
 - Operating Loss: €{pnl.get('Group operating loss', pnl.get('Operating loss', 0)):,.0f}
-- Loss After Tax: €{pnl.get('Loss for the period', 0):,.0f}
+- Loss Before Taxation: €{pnl.get('Loss before taxation', 0):,.0f}
+- Loss for the Period: €{pnl.get('Loss for the period', 0):,.0f}
 
 Balance Sheet:
 - Cash: €{cash:,.0f}
@@ -81,23 +93,22 @@ KPIs:
 - ROCE: {kpis.get('roce', 0):.1f}%
 - DSCR: {('%.2fx' % kpis['dscr']) if 'dscr' in kpis else 'not significant (negative operating cash flow)'}
 
-    CONTEXT: You are analyzing financials for period {period_label} (6 months).
-             Do not reference events from other periods unless they are explicitly
-             documented for {period_label}. Do not state long-term targets
-             (e.g. CAGR) unless explicitly stated in the data for {period_label}.
+CONTEXT: You are analyzing financials for period {period_label} (6 months).
+Do not reference events from other periods unless they are explicitly documented for {period_label}.
+Do not state long-term targets (e.g. CAGR) unless explicitly stated in the data for {period_label}.
 
-    STRICT RULES:
-    - Use ONLY the figures and facts in FINANCIAL DATA and CONTEXT above. Never invent events, causes, costs, contracts or forecasts.
-    - Every numeric claim must match a figure above; do not restate a figure as text without the number.
-    - Do not claim new contracts, partnerships or funding unless explicitly named above.
-    - If something material is missing (e.g. no prior-year comparator), say so instead of estimating.
-    - This is a 6-month period ({period_label}); do not conflate with full-year or other periods.
-    - Do not contradict computed KPIs (e.g. if DSCR is marked "not significant", never state a DSCR value or imply positive debt service coverage).
-    - Prefer descriptive statements over speculative recommendations; do not invent causes/costs.
+STRICT RULES:
+- Use ONLY the figures and facts in FINANCIAL DATA and CONTEXT above. Never invent events, causes, costs, contracts or forecasts.
+- Every numeric claim must match a figure above; do not restate a figure as text without the number.
+- Do not claim new contracts, partnerships or funding unless explicitly named above.
+- If something material is missing (e.g. no prior-year comparator), say so instead of estimating.
+- This is a 6-month period ({period_label}); do not conflate with full-year or other periods.
+- Do not contradict computed KPIs (e.g. if DSCR is marked "not significant", never state a DSCR value or imply positive debt service coverage).
+- Prefer descriptive statements over speculative recommendations; do not invent causes/costs.
 
-    Return JSON array of insights with: section, insight, confidence (0-1). Focus on: revenue quality, cost discipline, cash runway, strategic milestones, risks.
+Return JSON array of insights with: section, insight, confidence (0-1). Focus on: revenue quality, cost discipline, cash runway, strategic milestones, risks.
 
-    Only use the percentages and ratios listed above. Do not introduce any other calculated ratio or percentage, and do not invent figures."""
+Only use the percentages and ratios listed above. Do not introduce any other calculated ratio or percentage, and do not invent figures."""
 
     import asyncio
 
@@ -123,8 +134,6 @@ KPIs:
         import json
         data = json.loads(response.choices[0].message.content)
 
-        # The model may return {"insights": [...]}, a bare list, a single
-        # insight object, or a dict of section -> text. Normalise all shapes.
         if isinstance(data, dict):
             wrapper = next(
                 (data[k] for k in ("insights", "sections", "analysis", "items")
@@ -169,144 +178,151 @@ KPIs:
         return [AIInsight(section="AI Error", insight=f"Failed to generate insights: {str(e)}", confidence=0.0)]
 
 
-async def chat_with_document(
-    request: ChatRequest,
-    db: AsyncSession,
-) -> ChatResponse:
-    """Chat with AI about a specific period's financial document.
-
-    Uses the period's financial data + the raw document text as context so the
-    CEO can ask specific questions about the figures.
-    """
+async def compare_periods(request: PeriodCompareRequest, db: AsyncSession) -> PeriodCompareResponse:
+    """Compare two periods using AI analysis."""
     if not client:
-        return ChatResponse(
-            message="Groq API key not configured. Set GROQ_API_KEY environment variable.",
-            sources=[],
+        return PeriodCompareResponse(
+            label_a=request.period_label_a,
+            label_b=request.period_label_b,
+            insight="Groq API key not configured. Set GROQ_API_KEY environment variable.",
+            confidence=0.0,
         )
 
-    # Fetch period + document
-    result = await db.execute(
+    # Fetch both periods
+    result_a = await db.execute(
         select(Period)
         .options(
             selectinload(Period.pnl_items),
             selectinload(Period.bs_items),
             selectinload(Period.cf_items),
             selectinload(Period.kpis),
-            selectinload(Period.source_document),
         )
-        .where(Period.label == request.period_label)
+        .where(Period.label == request.period_label_a)
     )
-    period = result.scalar_one_or_none()
-    if not period:
-        return ChatResponse(
-            message=f"Period '{request.period_label}' not found.",
-            sources=[],
+    period_a = result_a.scalar_one_or_none()
+    if not period_a:
+        return PeriodCompareResponse(
+            label_a=request.period_label_a,
+            label_b=request.period_label_b,
+            insight=f"Period '{request.period_label_a}' not found.",
+            confidence=0.0,
         )
 
-    # Build financial context
-    pnl = {item.line_item: float(item.value_eur) for item in period.pnl_items}
-    bs = {item.line_item: float(item.value_eur) for item in period.bs_items}
-    cf = {item.line_item: float(item.value_eur) for item in period.cf_items}
-    kpis = {k.metric: float(k.value) for k in period.kpis}
+    result_b = await db.execute(
+        select(Period)
+        .options(
+            selectinload(Period.pnl_items),
+            selectinload(Period.bs_items),
+            selectinload(Period.cf_items),
+            selectinload(Period.kpis),
+        )
+        .where(Period.label == request.period_label_b)
+    )
+    period_b = result_b.scalar_one_or_none()
+    if not period_b:
+        return PeriodCompareResponse(
+            label_a=request.period_label_a,
+            label_b=request.period_label_b,
+            insight=f"Period '{request.period_label_b}' not found.",
+            confidence=0.0,
+        )
 
-    doc = period.source_document
-    doc_text = ""
-    if doc and doc.raw_json:
-        try:
-            import json as _json
-            raw = _json.loads(doc.raw_json)
-            if isinstance(raw, dict):
-                # Extract narrative text from the extracted JSON
-                narrative = raw.get("narrative_insights", {})
-                if isinstance(narrative, dict):
-                    for _k, _v in narrative.items():
-                        if isinstance(_v, str):
-                            doc_text += f"{_k}: {_v}\n"
-        except Exception:
-            pass
+    p_a = {item.line_item: float(item.value_eur) for item in period_a.pnl_items}
+    b_a = {item.line_item: float(item.value_eur) for item in period_a.bs_items}
+    kpis_a = {k.metric: float(k.value) for k in period_a.kpis}
 
-    # Build conversation history
-    messages: list[dict] = [
-        {
-            "role": "system",
-            "content": (
-                "You are a senior financial analyst answering questions for the CEO of Senus PLC. "
-                "Your job is to answer questions ONLY about this specific financial document. "
-                "\n\nGOLDEN RULES:\n"
-                "1. SHORT AND DIRECT ANSWERS: Maximum 2-3 paragraphs per response. No long lists of numbers.\n"
-                "2. CONTEXT FIRST, NUMBERS SECOND: Explain what the figure means before stating it. "
-                "   Bad: 'Revenue is 354,813€'. Good: 'Revenue grew 4% year-over-year, reaching 354,813€.'\n"
-                "3. COMPARE WHEN IT MAKES SENSE: If the user asks about a figure, compare with the prior period if available.\n"
-                "4. CITE PAGES: If the information comes from a specific page of the document, add [p.X] at the end of the sentence.\n"
-                "5. NO HALLUCINATIONS: If the information is not in the provided data, say 'Not available in this document'.\n"
-                "6. EXECUTIVE FOCUS: Prioritize profitability, cash and risks over minor accounting detail.\n"
-                "7. LANGUAGE: Always respond in English.\n"
-            ),
-        },
-    ]
+    p_b = {item.line_item: float(item.value_eur) for item in period_b.pnl_items}
+    b_b = {item.line_item: float(item.value_eur) for item in period_b.bs_items}
+    kpis_b = {k.metric: float(k.value) for k in period_b.kpis}
 
-    # Add financial summary as context (not as the main answer)
-    cash = bs.get("Cash and cash equivalents", bs.get("Cash and bank balances", 0))
-    total_creditors = abs(bs.get("Creditors < 1yr", 0)) + abs(bs.get("Creditors > 1yr", 0))
-    equity = bs.get("Equity") or bs.get("Net Assets", 0)
+    prompt = f"""You are a CFO-grade financial analyst comparing two periods for Senus PLC.
 
-    fin_context = f"""FINANCIAL DATA FOR REFERENCE ({period.label}):
+PERIOD A: {request.period_label_a}
 P&L:
-- Revenue (Turnover): €{pnl.get('Revenue', pnl.get('Turnover', 0)):,.0f}
-- Cost of Sales: €{pnl.get('Cost of sales', 0):,.0f}
-- Gross Profit: €{pnl.get('Gross Profit', 0):,.0f}
-- Admin Expenses: €{pnl.get('Administrative expenses', 0):,.0f}
-- Operating Loss: €{pnl.get('Group operating loss', pnl.get('Operating loss', 0)):,.0f}
-- Loss for the Period: €{pnl.get('Loss for the period', 0):,.0f}
+- Revenue: €{p_a.get('Revenue', p_a.get('Turnover', 0)):,.0f}
+- Cost of Sales: €{p_a.get('Cost of sales', 0):,.0f}
+- Gross Profit: €{p_a.get('Gross Profit', 0):,.0f}
+- Admin Expenses: €{p_a.get('Administrative expenses', 0):,.0f}
+- Operating Loss: €{p_a.get('Group operating loss', p_a.get('Operating loss', 0)):,.0f}
+- Loss for the Period: €{p_a.get('Loss for the period', 0):,.0f}
 
 Balance Sheet:
-- Cash: €{cash:,.0f}
-- Total Creditors: €{total_creditors:,.0f}
-- Net Current Assets: €{bs.get('Net Current Assets', 0):,.0f}
-- Equity / Net Assets: €{equity:,.0f}
+- Cash: €{b_a.get('Cash and cash equivalents', b_a.get('Cash and bank balances', 0)):,.0f}
+- Total Creditors: €{abs(b_a.get('Creditors < 1yr', 0)) + abs(b_a.get('Creditors > 1yr', 0)):,.0f}
+- Equity / Net Assets: €{b_a.get('Equity') or b_a.get('Net Assets', 0):,.0f}
 
-KPIs:
-- Gross Margin: {kpis.get('gross_margin', 0):.1f}%
-- Net Margin: {kpis.get('net_margin', 0):.1f}%
-- Cash Runway: {kpis.get('runway_months', 0):.1f} months
-- Current Ratio: {kpis.get('current_ratio', 0):.2f}x
-- ROE: {kpis.get('roe', 0):.1f}%"""
+PERIOD B: {request.period_label_b}
+P&L:
+- Revenue: €{p_b.get('Revenue', p_b.get('Turnover', 0)):,.0f}
+- Cost of Sales: €{p_b.get('Cost of sales', 0):,.0f}
+- Gross Profit: €{p_b.get('Gross Profit', 0):,.0f}
+- Admin Expenses: €{p_b.get('Administrative expenses', 0):,.0f}
+- Operating Loss: €{p_b.get('Group operating loss', p_b.get('Operating loss', 0)):,.0f}
+- Loss for the Period: €{p_b.get('Loss for the period', 0):,.0f}
 
-    messages.append({"role": "system", "content": fin_context})
+Balance Sheet:
+- Cash: €{b_b.get('Cash and cash equivalents', b_b.get('Cash and bank balances', 0)):,.0f}
+- Total Creditors: €{abs(b_b.get('Creditors < 1yr', 0)) + abs(b_b.get('Creditors > 1yr', 0)):,.0f}
+- Equity / Net Assets: €{b_b.get('Equity') or b_b.get('Net Assets', 0):,.0f}
 
-    # Add conversation history
-    for m in request.history:
-        messages.append({"role": m.role, "content": m.content})
+KPIs Comparison:
+| Metric | {request.period_label_a} | {request.period_label_b} | Change |
+|--------|--------------------------|--------------------------|--------|
+| Revenue | €{p_a.get('Revenue', p_a.get('Turnover', 0)):,.0f} | €{p_b.get('Revenue', p_b.get('Turnover', 0)):,.0f} | {((p_b.get('Revenue', p_b.get('Turnover', 0)) - p_a.get('Revenue', p_a.get('Turnover', 0))) / p_a.get('Revenue', p_a.get('Turnover', 0)) * 100 if p_a.get('Revenue', p_a.get('Turnover', 0)) else 0):+.1f}% |
+| Gross Profit | €{p_a.get('Gross Profit', 0):,.0f} | €{p_b.get('Gross Profit', 0):,.0f} | {((p_b.get('Gross Profit', 0) - p_a.get('Gross Profit', 0)) / p_a.get('Gross Profit', 0) * 100 if p_a.get('Gross Profit', 0) else 0):+.1f}% |
+| Admin Expenses | €{p_a.get('Administrative expenses', 0):,.0f} | €{p_b.get('Administrative expenses', 0):,.0f} | {((p_b.get('Administrative expenses', 0) - p_a.get('Administrative expenses', 0)) / p_a.get('Administrative expenses', 0) * 100 if p_a.get('Administrative expenses', 0) else 0):+.1f}% |
+| Operating Loss | €{p_a.get('Group operating loss', p_a.get('Operating loss', 0)):,.0f} | €{p_b.get('Group operating loss', p_b.get('Operating loss', 0)):,.0f} | {((p_b.get('Group operating loss', p_b.get('Operating loss', 0)) - p_a.get('Group operating loss', p_a.get('Operating loss', 0))) / abs(p_a.get('Group operating loss', p_a.get('Operating loss', 0))) * 100 if p_a.get('Group operating loss', p_a.get('Operating loss', 0)) else 0):+.1f}% |
+| Loss for Period | €{p_a.get('Loss for the period', 0):,.0f} | €{p_b.get('Loss for the period', 0):,.0f} | {((p_b.get('Loss for the period', 0) - p_a.get('Loss for the period', 0)) / abs(p_a.get('Loss for the period', 0)) * 100 if p_a.get('Loss for the period', 0) else 0):+.1f}% |
+| Cash | €{b_a.get('Cash and cash equivalents', b_a.get('Cash and bank balances', 0)):,.0f} | €{b_b.get('Cash and cash equivalents', b_b.get('Cash and bank balances', 0)):,.0f} | {((b_b.get('Cash and cash equivalents', b_b.get('Cash and bank balances', 0)) - b_a.get('Cash and cash equivalents', b_a.get('Cash and bank balances', 0))) / b_a.get('Cash and cash equivalents', b_a.get('Cash and bank balances', 0)) * 100 if b_a.get('Cash and cash equivalents', b_a.get('Cash and bank balances', 0)) else 0):+.1f}% |
 
-    # Add current user message
-    messages.append({"role": "user", "content": request.message})
+CONTEXT: You are comparing two reporting periods for Senus PLC. Period A is {request.period_label_a}, Period B is {request.period_label_b}.
 
-    import asyncio, json
+STRICT RULES:
+- Use ONLY the figures provided above. Never invent numbers.
+- Every numeric claim must match a figure above.
+- Express changes as percentages where meaningful.
+- Focus on what changed, why it matters, and what the Board should pay attention to.
+- Be concise, professional, and executive-level.
 
-    response = None
-    last_error: Exception | None = None
-    for attempt in range(3):
-        try:
-            response = await client.chat.completions.create(
-                model=settings.GROQ_MODEL,
-                messages=messages,
-                temperature=0.2,
-                max_tokens=1000,
-            )
-            break
-        except Exception as exc:
-            last_error = exc
-            await asyncio.sleep(1.5 * (attempt + 1))
-    if response is None:
-        raise last_error if last_error else RuntimeError("No response from model")
+Return JSON object with: insight (string), confidence (0-1).
+"""
 
-    content = response.choices[0].message.content or "No response generated."
+    import asyncio
 
-    # Extract cited pages from content (e.g. [p.5])
-    import re
-    cited_pages = sorted(set(re.findall(r"\[p\.(\d+)\]", content)))
+    try:
+        response = None
+        last_error: Exception | None = None
+        for attempt in range(3):
+            try:
+                response = await client.chat.completions.create(
+                    model=settings.GROQ_MODEL,
+                    messages=[{"role": "user", "content": prompt}],
+                    temperature=0.1,
+                    max_tokens=800,
+                    response_format={"type": "json_object"},
+                )
+                break
+            except Exception as exc:
+                last_error = exc
+                await asyncio.sleep(1.5 * (attempt + 1))
+        if response is None:
+            raise last_error if last_error else RuntimeError("No response from model")
 
-    return ChatResponse(
-        message=content,
-        sources=[f"Page {p}" for p in cited_pages],
-    )
+        import json
+        data = json.loads(response.choices[0].message.content)
+        insight = data.get("insight", "No insight generated.")
+        confidence = float(data.get("confidence", 0.8) or 0.8)
+
+        return PeriodCompareResponse(
+            label_a=request.period_label_a,
+            label_b=request.period_label_b,
+            insight=insight,
+            confidence=confidence,
+        )
+    except Exception as e:
+        return PeriodCompareResponse(
+            label_a=request.period_label_a,
+            label_b=request.period_label_b,
+            insight=f"Failed to generate comparison: {str(e)}",
+            confidence=0.0,
+        )

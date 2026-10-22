@@ -115,3 +115,15 @@ class ValidationResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class PeriodCompareRequest(BaseModel):
+    period_label_a: str
+    period_label_b: str
+
+
+class PeriodCompareResponse(BaseModel):
+    label_a: str
+    label_b: str
+    insight: str
+    confidence: float

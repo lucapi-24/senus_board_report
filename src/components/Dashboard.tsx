@@ -23,8 +23,6 @@ import {
   Activity,
   Sparkles,
   RefreshCw,
-  MessageCircle,
-  Send,
 } from 'lucide-react'
 import {
   api,
@@ -100,40 +98,17 @@ export function Dashboard({ summary, selected, onSelect }: DashboardProps) {
   const [detail, setDetail] = useState<PeriodDetail | null>(null)
   const [insights, setInsights] = useState<AIInsight[]>([])
   const [insightsLoading, setInsightsLoading] = useState(false)
-
-  // Chat state
-  const [chatMessages, setChatMessages] = useState<{ role: string; content: string }[]>([])
-  const [chatInput, setChatInput] = useState('')
-  const [chatLoading, setChatLoading] = useState(false)
-
-  const handleChatSubmit = async (e: React.FormEvent) => {
-    e.preventDefault()
-    if (!chatInput.trim() || !selected) return
-
-    const userMessage = { role: 'user', content: chatInput }
-    setChatMessages((prev) => [...prev, userMessage])
-    setChatInput('')
-    setChatLoading(true)
-
-    try {
-      const response = await api.chatWithDocument({
-        message: chatInput,
-        period_label: selected,
-        history: chatMessages,
-      })
-      setChatMessages((prev) => [
-        ...prev,
-        { role: 'assistant', content: response.message },
-      ])
-    } catch {
-      setChatMessages((prev) => [
-        ...prev,
-        { role: 'assistant', content: 'Sorry, I could not reach the AI service. Please try again.' },
-      ])
-    } finally {
-      setChatLoading(false)
-    }
-  }
+  const [comparison, setComparison] = useState<{
+    label_a: string
+    label_b: string
+    insight: string
+    confidence: number
+  } | null>(null)
+  const [comparisonLoading, setComparisonLoading] = useState(false)
+  const [compareSelection, setCompareSelection] = useState<{
+    label_a: string | null
+    label_b: string | null
+  }>({ label_a: null, label_b: null })
 
   const loadInsights = () => {
     if (!selected) return
@@ -145,6 +120,27 @@ export function Dashboard({ summary, selected, onSelect }: DashboardProps) {
         setInsights([{ section: 'Error', insight: 'Could not reach the AI service.', confidence: 0 }]),
       )
       .finally(() => setInsightsLoading(false))
+  }
+
+  const handleCompare = async () => {
+    if (!compareSelection.label_a || !compareSelection.label_b || compareSelection.label_a === compareSelection.label_b) return
+    setComparisonLoading(true)
+    try {
+      const result = await api.comparePeriods({
+        period_label_a: compareSelection.label_a,
+        period_label_b: compareSelection.label_b,
+      })
+      setComparison(result)
+    } catch {
+      setComparison({
+        label_a: compareSelection.label_a,
+        label_b: compareSelection.label_b,
+        insight: 'Comparison failed. Please try again.',
+        confidence: 0,
+      })
+    } finally {
+      setComparisonLoading(false)
+    }
   }
 
   useEffect(() => {
@@ -163,7 +159,8 @@ export function Dashboard({ summary, selected, onSelect }: DashboardProps) {
 
   useEffect(() => {
     setInsights([])
-    setChatMessages([])
+    setComparison(null)
+    setCompareSelection({ label_a: null, label_b: null })
     loadInsights()
   }, [selected])
 
@@ -763,64 +760,83 @@ export function Dashboard({ summary, selected, onSelect }: DashboardProps) {
           )}
         </section>
 
-        {/* AI chat */}
-        <section className="insights chat">
+        {/* AI comparison */}
+        <section className="insights comparison">
           <div className="insights__head">
             <div className="insights__title">
               <span className="insights__badge">
-                <MessageCircle size={16} /> Ask AI
+                <Sparkles size={16} /> AI Comparison
               </span>
-              <h2>Ask About {current?.period.label}</h2>
-              <p>Ask questions about the financials. Answers are grounded in the source document.</p>
+              <h2>Compare Periods</h2>
+              <p>Compare two periods side by side with AI commentary.</p>
             </div>
           </div>
-          <div className="chat__messages">
-            {chatMessages.map((m, i) => (
-              <div
-                key={i}
-                className={`chat__message ${m.role === 'user' ? 'is-user' : 'is-assistant'}`}
+
+          <div className="compare__form">
+            <div className="compare__select">
+              <label>Period A</label>
+              <select
+                value={compareSelection.label_a ?? ''}
+                onChange={(e) => setCompareSelection((prev) => ({ ...prev, label_a: e.target.value }))}
               >
-                {m.role === 'user' ? (
-                  <>
-                    <span className="chat__who">You</span>
-                    <p className="chat__text">{m.content}</p>
-                  </>
-                ) : (
-                  <>
-                    <span className="chat__who">AI</span>
-                    <p className="chat__text">{m.content}</p>
-                  </>
-                )}
-              </div>
-            ))}
-            {chatLoading && (
-              <div className="chat__message is-assistant">
-                <span className="chat__who">AI</span>
-                <p className="chat__text">Thinking…</p>
-              </div>
-            )}
-          </div>
-          <form className="chat__form" onSubmit={handleChatSubmit}>
-            <input
-              type="text"
-              className="chat__input"
-              placeholder="Ask about revenue, costs, cash runway, or any figure…"
-              value={chatInput}
-              onChange={(e) => setChatInput(e.target.value)}
-              disabled={chatLoading || !selected}
-            />
+                <option value="">Select period</option>
+                {summary.map((s) => (
+                  <option key={s.period.label} value={s.period.label}>
+                    {s.period.label} ({s.period.start_date} to {s.period.end_date})
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="compare__select">
+              <label>Period B</label>
+              <select
+                value={compareSelection.label_b ?? ''}
+                onChange={(e) => setCompareSelection((prev) => ({ ...prev, label_b: e.target.value }))}
+              >
+                <option value="">Select period</option>
+                {summary.map((s) => (
+                  <option key={s.period.label} value={s.period.label}>
+                    {s.period.label} ({s.period.start_date} to {s.period.end_date})
+                  </option>
+                ))}
+              </select>
+            </div>
             <button
-              type="submit"
+              type="button"
               className="btn btn--primary btn--small"
-              disabled={chatLoading || !selected || !chatInput.trim()}
+              disabled={comparisonLoading || !compareSelection.label_a || !compareSelection.label_b || compareSelection.label_a === compareSelection.label_b}
+              onClick={handleCompare}
             >
-              <Send size={16} />
+              {comparisonLoading ? 'Comparing…' : 'Compare'}
             </button>
-          </form>
-          <p className="chat__note">
-            Answers are generated from the extracted financial figures and document text. Verify
-            important figures against the source document before making decisions.
-          </p>
+          </div>
+
+          {comparisonLoading && (
+            <div className="state state--inline">
+              <RefreshCw className="spin" size={22} />
+              <p>Comparing periods…</p>
+            </div>
+          )}
+
+          {comparison && (
+            <div className="compare__result">
+              <div className="compare__columns">
+                <div className="compare__col">
+                  <h3>{comparison.label_a}</h3>
+                  <p className="muted small">{summary.find((s) => s.period.label === comparison.label_a)?.period.start_date} to {summary.find((s) => s.period.label === comparison.label_a)?.period.end_date}</p>
+                </div>
+                <div className="compare__col compare__col--arrow">→</div>
+                <div className="compare__col">
+                  <h3>{comparison.label_b}</h3>
+                  <p className="muted small">{summary.find((s) => s.period.label === comparison.label_b)?.period.start_date} to {summary.find((s) => s.period.label === comparison.label_b)?.period.end_date}</p>
+                </div>
+              </div>
+              <div className="compare__insight">
+                <p>{comparison.insight}</p>
+                <span className="muted small">Confidence: {(comparison.confidence * 100).toFixed(0)}%</span>
+              </div>
+            </div>
+          )}
         </section>
       </div>
     </div>

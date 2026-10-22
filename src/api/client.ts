@@ -211,19 +211,18 @@ export const api = {
   periodDetail: (label: string) => get<PeriodDetail>(`/api/periods/${label}`),
   kpis: (label: string) => get<KPIValue[]>(`/api/kpis/${label}`),
   insights: (label: string) => get<AIInsight[]>(`/api/insights/${label}`),
-  chatWithDocument: async (body: {
-    message: string
-    period_label: string
-    history: { role: string; content: string }[]
+  comparePeriods: async (body: {
+    period_label_a: string
+    period_label_b: string
   }) => {
-    const res = await fetch(`${API_BASE}/api/insights/chat`, {
+    const res = await fetch(`${API_BASE}/api/insights/compare`, {
       method: 'POST',
       headers: { ...authHeaders(), 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     })
     if (!res.ok) {
       onUnauthorized(res.status)
-      throw new Error(await res.text() || 'Chat failed')
+      throw new Error(await res.text() || 'Compare failed')
     }
     return res.json()
   },
