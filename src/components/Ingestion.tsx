@@ -125,6 +125,11 @@ export function Ingestion({ role, onDataChanged }: { role?: string; onDataChange
       setDocType('interim_results')
       await loadDocuments()
       await openDocument(created.id)
+      // If document has detected periods, show confirmation UI
+      if (created.detected_periods && created.detected_periods.length > 0) {
+        setConfirmingDocId(created.id)
+        setConfirmingPeriods(created.detected_periods.map((p) => p.label))
+      }
     })
 
   const handleProcess = (id: number) =>
