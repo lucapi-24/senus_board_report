@@ -17,8 +17,8 @@ from app.schemas.documents import (
     DocumentResponse,
     DocumentUpdate,
     PeriodConfirmRequest,
-    PeriodResponse,
 )
+from app.schemas.financial import PeriodResponse
 from app.services import lifecycle
 from app.services.ingest import ingest_document, read_pages
 from app.services import period_detector
