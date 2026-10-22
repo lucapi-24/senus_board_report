@@ -48,3 +48,7 @@ class DocumentUpdate(BaseModel):
     start_date: Optional[date] = None
     end_date: Optional[date] = None
     doc_type: Optional[str] = None
+
+
+class PeriodConfirmRequest(BaseModel):
+    period_labels: List[str]

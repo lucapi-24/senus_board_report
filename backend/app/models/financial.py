@@ -45,6 +45,7 @@ class Document(Base):
     periods_manually_edited = Column(Boolean, nullable=False, server_default="false")  # True if user changed dates/label
     edited_by = Column(String(255), nullable=True)          # Email of user who last edited period dates/label
     edited_at = Column(DateTime(timezone=True), nullable=True)  # When period dates/label were last manually edited
+    confirmed_period_labels_json = Column(Text, nullable=True)  # JSON: list of confirmed period labels
 
     periods = relationship("Period", backref="source_document", cascade="all, delete-orphan")
 

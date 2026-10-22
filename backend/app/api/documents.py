@@ -1,6 +1,6 @@
 import json
 import uuid
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import List, Optional
 
@@ -12,7 +12,12 @@ from app.core.config import settings
 from app.core.database import get_db
 from app.core.security import get_current_user, require_admin
 from app.models.financial import AuditLog, Document, User
-from app.schemas.documents import DocumentDetailResponse, DocumentResponse, DocumentUpdate
+from app.schemas.documents import (
+    DocumentDetailResponse,
+    DocumentResponse,
+    DocumentUpdate,
+    PeriodConfirmRequest,
+)
 from app.services import lifecycle
 from app.services.ingest import ingest_document, read_pages
 from app.services import period_detector
@@ -254,7 +259,7 @@ async def update_document(
 @router.post("/{document_id}/confirm-periods", response_model=DocumentResponse)
 async def confirm_periods(
     document_id: int,
-    period_labels: List[str],
+    payload: PeriodConfirmRequest,
     db: AsyncSession = Depends(get_db),
     user: User = Depends(require_admin),
 ):
@@ -277,23 +282,21 @@ async def confirm_periods(
             detected = []
 
     detected_labels = {p["label"] for p in detected}
-    for label in period_labels:
+    for label in payload.period_labels:
         if label not in detected_labels:
             raise HTTPException(
                 status_code=400,
                 detail=f"Label '{label}' not in detected periods: {sorted(detected_labels)}",
             )
 
-    doc.period_label = period_labels[0] if period_labels else None
+    doc.period_label = payload.period_labels[0] if payload.period_labels else None
     doc.periods_manually_edited = True
     doc.edited_by = user.email
     doc.edited_at = datetime.now(timezone.utc)
 
-    # Store confirmed labels in meta_json for reference
+    # Store confirmed labels in confirmed_period_labels_json for reference
     import json as _json
-    meta = doc.doc_meta or {}
-    meta["confirmed_period_labels"] = period_labels
-    doc.meta_json = _json.dumps(meta)
+    doc.confirmed_period_labels_json = _json.dumps(payload.period_labels)
 
     db.add(
         AuditLog(
@@ -301,7 +304,7 @@ async def confirm_periods(
             action="confirm_periods",
             entity="document",
             entity_id=doc.id,
-            after_json=_json.dumps({"confirmed_period_labels": period_labels}),
+            after_json=_json.dumps({"confirmed_period_labels": payload.period_labels}),
         )
     )
     await db.commit()
