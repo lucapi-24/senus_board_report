@@ -1835,3 +1835,20 @@
     max-height: 20rem;
   }
 }
+
+/* ---------- Period badges in document list ---------- */
+.doc-row__periods {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 0.25rem;
+}
+
+.period-badge {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--senus-teal-dark);
+  background: var(--senus-teal-soft);
+  padding: 0.125rem 0.5rem;
+  border-radius: var(--radius-pill);
+  white-space: nowrap;
+}

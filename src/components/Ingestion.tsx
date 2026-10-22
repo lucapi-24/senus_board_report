@@ -17,15 +17,6 @@ const STATEMENT_LABELS: Record<string, string> = {
   cash_flow: 'Cash Flow',
 }
 
-const STATUS_LABELS: Record<string, string> = {
-  uploaded: 'Uploaded',
-  processing: 'Processing',
-  extracted: 'Extracted',
-  in_review: 'In review',
-  published: 'Published',
-  error: 'Error',
-}
-
 interface MergedItem extends ReconciledItem {
   review_status?: string | null
 }
@@ -42,8 +33,9 @@ function merge(review: ReconciledItem[] = [], current: LineItem[] = []): MergedI
   })
 }
 
-function StatusBadge({ status }: { status: string }) {
-  return <span className={`status-badge status-badge--${status}`}>{STATUS_LABELS[status] ?? status}</span>
+function formatDate(dateStr: string): string {
+  const d = new Date(dateStr)
+  return d.toLocaleDateString('en-IE', { day: '2-digit', month: 'short', year: 'numeric' })
 }
 
 export function Ingestion({ role, onDataChanged }: { role?: string; onDataChanged?: () => void }) {
@@ -52,6 +44,7 @@ export function Ingestion({ role, onDataChanged }: { role?: string; onDataChange
   const [detail, setDetail] = useState<DocumentDetail | null>(null)
   const [period, setPeriod] = useState<PeriodDetail | null>(null)
   const [periods, setPeriods] = useState<Period[]>([])  // All periods for current document
+  const [docPeriods, setDocPeriods] = useState<Map<number, Period[]>>(new Map())  // doc_id -> periods
   const [busy, setBusy] = useState('')
   const [error, setError] = useState('')
 
@@ -72,6 +65,15 @@ export function Ingestion({ role, onDataChanged }: { role?: string; onDataChange
   const loadDocuments = async () => {
     const docs = await api.documents()
     setDocuments(docs)
+    // Load periods for each document
+    for (const doc of docs) {
+      try {
+        const docPeriods = await api.documentPeriods(doc.id)
+        setDocPeriods((prev) => new Map(prev).set(doc.id, docPeriods))
+      } catch {
+        // Silently ignore errors for individual documents
+      }
+    }
     return docs
   }
 
@@ -92,6 +94,16 @@ export function Ingestion({ role, onDataChanged }: { role?: string; onDataChange
       }
     } catch {
       setPeriods([])
+      setPeriod(null)
+    }
+  }
+
+  const openPeriod = async (periodLabel: string) => {
+    setError('')
+    try {
+      const periodDetail = await api.periodDetail(periodLabel)
+      setPeriod(periodDetail)
+    } catch {
       setPeriod(null)
     }
   }
@@ -375,117 +387,144 @@ export function Ingestion({ role, onDataChanged }: { role?: string; onDataChange
             <p className="muted">No documents uploaded yet.</p>
           ) : (
             <ul className="doc-list">
-              {documents.map((doc) => (
-                <li
-                  key={doc.id}
-                  className={`doc-row ${detail?.id === doc.id ? 'is-selected' : ''} ${
-                    editingDocId === doc.id ? 'is-editing' : ''
-                  }`}
-                >
-                  <button type="button" className="doc-row__main" onClick={() => openDocument(doc.id)}>
-                    <strong>{doc.period_label ?? doc.filename}</strong>
-                    <span className="muted">
-                      {doc.filename}
-                      {doc.page_count ? ` · ${doc.page_count} pages` : ''}
-                    </span>
-                  </button>
-                  <StatusBadge status={doc.status} />
-                  <div className="doc-row__actions">
-                    {editingDocId === doc.id ? (
-                      <>
-                        <label className="field" style={{ margin: 0, flex: 1, minWidth: 120 }}>
-                          <span>Period</span>
-                          <input
-                            type="text"
-                            value={editLabel}
-                            onChange={(e) => setEditLabel(e.target.value)}
-                            placeholder="HY2026"
-                          />
-                        </label>
-                        <label className="field" style={{ margin: 0, flex: 1, minWidth: 110 }}>
-                          <span>Start</span>
-                          <input
-                            type="date"
-                            value={editStart}
-                            onChange={(e) => setEditStart(e.target.value)}
-                          />
-                        </label>
-                        <label className="field" style={{ margin: 0, flex: 1, minWidth: 110 }}>
-                          <span>End</span>
-                          <input
-                            type="date"
-                            value={editEnd}
-                            onChange={(e) => setEditEnd(e.target.value)}
-                          />
-                        </label>
-                        <button
-                          type="button"
-                          className="btn btn--small btn--primary"
-                          disabled={busy.startsWith('edit-')}
-                          onClick={() => handleEditSave(doc.id)}
-                        >
-                          Save
-                        </button>
-                        <button
-                          type="button"
-                          className="btn btn--small"
-                          onClick={handleEditCancel}
-                        >
-                          Cancel
-                        </button>
-                      </>
-                    ) : (
-                      <>
-                        {isAdmin && (doc.status === 'uploaded' || doc.status === 'error') && (
+              {documents.map((doc) => {
+                const docPeriodsList = docPeriods.get(doc.id) || []
+                return (
+                  <li
+                    key={doc.id}
+                    className={`doc-row ${detail?.id === doc.id ? 'is-selected' : ''} ${
+                      editingDocId === doc.id ? 'is-editing' : ''
+                    }`}
+                  >
+                    <button type="button" className="doc-row__main" onClick={() => openDocument(doc.id)}>
+                      <strong>{doc.filename}</strong>
+                      <span className="muted">
+                        {docPeriodsList.length > 0
+                          ? docPeriodsList.map((p) => p.label).join(', ')
+                          : doc.period_label ?? '—'}
+                      </span>
+                    </button>
+                    <div className="doc-row__periods">
+                      {docPeriodsList.map((p) => (
+                        <span key={p.label} className="period-badge">
+                          {p.label}
+                          {p.start_date && p.end_date ? ` (${formatDate(p.start_date)} – ${formatDate(p.end_date)})` : ''}
+                        </span>
+                      ))}
+                    </div>
+                    <div className="doc-row__actions">
+                      {editingDocId === doc.id ? (
+                        <>
+                          <label className="field" style={{ margin: 0, flex: 1, minWidth: 120 }}>
+                            <span>Period</span>
+                            <input
+                              type="text"
+                              value={editLabel}
+                              onChange={(e) => setEditLabel(e.target.value)}
+                              placeholder="HY2026"
+                            />
+                          </label>
+                          <label className="field" style={{ margin: 0, flex: 1, minWidth: 110 }}>
+                            <span>Start</span>
+                            <input
+                              type="date"
+                              value={editStart}
+                              onChange={(e) => setEditStart(e.target.value)}
+                            />
+                          </label>
+                          <label className="field" style={{ margin: 0, flex: 1, minWidth: 110 }}>
+                            <span>End</span>
+                            <input
+                              type="date"
+                              value={editEnd}
+                              onChange={(e) => setEditEnd(e.target.value)}
+                            />
+                          </label>
+                          <button
+                            type="button"
+                            className="btn btn--small btn--primary"
+                            disabled={busy.startsWith('edit-')}
+                            onClick={() => handleEditSave(doc.id)}
+                          >
+                            Save
+                          </button>
                           <button
                             type="button"
                             className="btn btn--small"
-                            disabled={busy === 'process'}
-                            onClick={() => handleProcess(doc.id)}
+                            onClick={handleEditCancel}
                           >
-                            Process
+                            Cancel
                           </button>
-                        )}
-                        {(doc.status === 'extracted' || doc.status === 'in_review' || doc.status === 'published') && (
-                          <button type="button" className="btn btn--small" onClick={() => openDocument(doc.id)}>
-                            Review
-                          </button>
-                        )}
-                        {doc.status === 'processing' && (
-                          <button type="button" className="btn btn--small" disabled>
-                            Processing…
-                          </button>
-                        )}
-                        {isAdmin && doc.status !== 'published' && (
-                          <button
-                            type="button"
-                            className="btn btn--small btn--outline"
-                            onClick={() => {
-                              setEditingDocId(doc.id)
-                              setEditLabel(doc.period_label ?? '')
-                              setEditStart(doc.period_start ?? '')
-                              setEditEnd(doc.period_end ?? '')
-                              setEditDocType(doc.doc_type ?? 'interim_results')
-                            }}
-                          >
-                            Edit details
-                          </button>
-                        )}
-                        {isAdmin && doc.status !== 'published' && (
-                          <button
-                            type="button"
-                            className="btn btn--small btn--danger"
-                            disabled={busy.startsWith('delete-')}
-                            onClick={() => handleDelete(doc.id)}
-                          >
-                            Delete
-                          </button>
-                        )}
-                      </>
-                    )}
-                  </div>
-                </li>
-              ))}
+                        </>
+                      ) : (
+                        <>
+                          {isAdmin && (doc.status === 'uploaded' || doc.status === 'error') && (
+                            <button
+                              type="button"
+                              className="btn btn--small"
+                              disabled={busy === 'process'}
+                              onClick={() => handleProcess(doc.id)}
+                            >
+                              Process
+                            </button>
+                          )}
+                          {doc.status === 'processing' && (
+                            <button type="button" className="btn btn--small" disabled>
+                              Processing…
+                            </button>
+                          )}
+                          {(doc.status === 'extracted' || doc.status === 'in_review' || doc.status === 'published') && (
+                            <button
+                              type="button"
+                              className="btn btn--small"
+                              onClick={() => {
+                                const firstPeriod = docPeriodsList[0]
+                                if (firstPeriod) {
+                                  openPeriod(firstPeriod.label)
+                                } else {
+                                  openDocument(doc.id)
+                                }
+                              }}
+                            >
+                              Review
+                            </button>
+                          )}
+                          {doc.status === 'processing' && (
+                            <button type="button" className="btn btn--small" disabled>
+                              Processing…
+                            </button>
+                          )}
+                          {isAdmin && doc.status !== 'published' && (
+                            <button
+                              type="button"
+                              className="btn btn--small btn--outline"
+                              onClick={() => {
+                                setEditingDocId(doc.id)
+                                setEditLabel(doc.period_label ?? '')
+                                setEditStart(doc.period_start ?? '')
+                                setEditEnd(doc.period_end ?? '')
+                                setEditDocType(doc.doc_type ?? 'interim_results')
+                              }}
+                            >
+                              Edit details
+                            </button>
+                          )}
+                          {isAdmin && doc.status !== 'published' && (
+                            <button
+                              type="button"
+                              className="btn btn--small btn--danger"
+                              disabled={busy.startsWith('delete-')}
+                              onClick={() => handleDelete(doc.id)}
+                            >
+                              Delete
+                            </button>
+                          )}
+                        </>
+                      )}
+                    </div>
+                  </li>
+                )
+              })}
             </ul>
           )}
         </section>
