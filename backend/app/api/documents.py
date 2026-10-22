@@ -11,12 +11,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.core.database import get_db
 from app.core.security import get_current_user, require_admin
-from app.models.financial import AuditLog, Document, User
+from app.models.financial import AuditLog, Document, Period, User
 from app.schemas.documents import (
     DocumentDetailResponse,
     DocumentResponse,
     DocumentUpdate,
     PeriodConfirmRequest,
+    PeriodResponse,
 )
 from app.services import lifecycle
 from app.services.ingest import ingest_document, read_pages
@@ -312,7 +313,18 @@ async def confirm_periods(
     return _reload(doc)
 
 
-@router.delete("/{document_id}", status_code=204)
+@router.get("/{document_id}/periods", response_model=List[PeriodResponse])
+async def list_document_periods(
+    document_id: int,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """List all periods associated with a document."""
+    doc = await db.get(Document, document_id)
+    if doc is None:
+        raise HTTPException(status_code=404, detail="Document not found")
+    result = await db.execute(select(Period).where(Period.source_doc_id == document_id))
+    return list(result.scalars().all())
 async def delete_document(
     document_id: int,
     db: AsyncSession = Depends(get_db),

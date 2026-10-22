@@ -1710,6 +1710,49 @@
   line-height: 1.4;
 }
 
+/* ---------- Period switcher in review ---------- */
+.review__title-row {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.period-switcher {
+  display: flex;
+  gap: 0.5rem;
+  margin-left: 1rem;
+}
+
+.period-switcher__label {
+  font-size: 0.813rem;
+  font-weight: 600;
+  color: var(--senus-text-muted);
+  margin-top: 0.125rem;
+}
+
+.period-btn {
+  padding: 0.375rem 0.75rem;
+  border: 0.063rem solid var(--senus-border);
+  border-radius: var(--radius-sm);
+  background: var(--senus-surface);
+  color: var(--senus-text);
+  font-size: 0.813rem;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.period-btn:hover {
+  border-color: var(--senus-peach);
+  color: var(--senus-peach);
+}
+
+.period-btn.is-active {
+  background: var(--senus-teal);
+  color: #fff;
+  border-color: var(--senus-teal);
+}
+
 /* ---------- AI Chat ---------- */
 .insights.chat {
   margin-top: 3rem;

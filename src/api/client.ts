@@ -229,6 +229,7 @@ export const api = {
   },
   documents: () => get<DocumentSummary[]>('/api/documents'),
   document: (id: number) => get<DocumentDetail>(`/api/documents/${id}`),
+  documentPeriods: (id: number) => get<Period[]>(`/api/documents/${id}/periods`),
   uploadDocument: async (file: File, fields: UploadFields) => {
     const form = new FormData()
     form.append('file', file)

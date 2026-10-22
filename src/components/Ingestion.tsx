@@ -5,6 +5,7 @@ import {
   formatEur,
   type DocumentDetail,
   type DocumentSummary,
+  type Period,
   type PeriodDetail,
   type ReconciledItem,
   type LineItem,
@@ -50,6 +51,7 @@ export function Ingestion({ role, onDataChanged }: { role?: string; onDataChange
   const [documents, setDocuments] = useState<DocumentSummary[]>([])
   const [detail, setDetail] = useState<DocumentDetail | null>(null)
   const [period, setPeriod] = useState<PeriodDetail | null>(null)
+  const [periods, setPeriods] = useState<Period[]>([])  // All periods for current document
   const [busy, setBusy] = useState('')
   const [error, setError] = useState('')
 
@@ -77,13 +79,19 @@ export function Ingestion({ role, onDataChanged }: { role?: string; onDataChange
     setError('')
     const detailData = await api.document(id)
     setDetail(detailData)
-    if (detailData.period_label) {
-      try {
-        setPeriod(await api.periodDetail(detailData.period_label))
-      } catch {
+    // Load all periods for this document so user can switch between them
+    try {
+      const docPeriods = await api.documentPeriods(id)
+      setPeriods(docPeriods)
+      // Select the first period by default
+      if (docPeriods.length > 0) {
+        const periodDetail = await api.periodDetail(docPeriods[0].label)
+        setPeriod(periodDetail)
+      } else {
         setPeriod(null)
       }
-    } else {
+    } catch {
+      setPeriods([])
       setPeriod(null)
     }
   }
@@ -158,6 +166,15 @@ export function Ingestion({ role, onDataChanged }: { role?: string; onDataChange
       await openDocument(detail!.id)
       onDataChanged?.()
     })
+
+  const handleSwitchPeriod = async (label: string) => {
+    try {
+      const periodDetail = await api.periodDetail(label)
+      setPeriod(periodDetail)
+    } catch {
+      setPeriod(null)
+    }
+  }
 
   const handlePublish = () =>
     run('publish', async () => {
@@ -486,9 +503,26 @@ export function Ingestion({ role, onDataChanged }: { role?: string; onDataChange
         {detail && detail.review?.summary && period && (
         <section className="panel review">
           <div className="review__head">
-            <h2 className="panel__title">
-              <Check size={18} aria-hidden="true" /> Review · {period.label}
-            </h2>
+            <div className="review__title-row">
+              <div className="review__title">
+                <Check size={18} aria-hidden="true" /> Review · {period.label}
+              </div>
+              {periods.length > 1 && (
+                <div className="period-switcher">
+                  <span className="period-switcher__label">Period:</span>
+                  {periods.map((p) => (
+                    <button
+                      key={p.label}
+                      type="button"
+                      className={`period-btn ${period?.label === p.label ? 'is-active' : ''}`}
+                      onClick={() => handleSwitchPeriod(p.label)}
+                    >
+                      {p.label}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
             <div className="review__summary">
               <span className="pill pill--ok">{detail.review.summary.matched} matched</span>
               <span className="pill pill--warn">{pending} to review</span>
