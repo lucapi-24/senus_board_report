@@ -1,7 +1,19 @@
 from datetime import date, datetime
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+
+
+class DetectedPeriod(BaseModel):
+    """A period detected in an uploaded document, ready for confirmation."""
+    label: str
+    start_date: date
+    end_date: date
+    column: Optional[int] = None
+    pages: List[int] = Field(default_factory=list)
+    source: str = "regex"
+    score: float = 50.0
+    is_primary: bool = False
 
 
 class DocumentResponse(BaseModel):
@@ -16,6 +28,12 @@ class DocumentResponse(BaseModel):
     error: Optional[str] = None
     uploaded_at: Optional[datetime] = None
     extracted_at: Optional[datetime] = None
+    # New: auto-detected periods from document headers
+    detected_periods: List[DetectedPeriod] = Field(default_factory=list)
+    # New: whether the user manually edited period dates/label
+    periods_manually_edited: bool = False
+    edited_by: Optional[str] = None
+    edited_at: Optional[datetime] = None
 
     class Config:
         from_attributes = True

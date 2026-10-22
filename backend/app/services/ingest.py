@@ -104,9 +104,15 @@ async def _persist(
     result: Dict[str, Any],
     proposal: Dict[str, Any],
     page_count: int,
+    label: Optional[str] = None,
+    start_date: Optional[date] = None,
+    end_date: Optional[date] = None,
 ) -> None:
-    label = doc.period_label
-    existing = (await db.execute(select(Period).where(Period.label == label))).scalars().all()
+    use_label = label or doc.period_label
+    use_start = start_date or doc.period_start
+    use_end = end_date or doc.period_end
+
+    existing = (await db.execute(select(Period).where(Period.label == use_label))).scalars().all()
     for period in existing:
         await db.delete(period)
     await db.flush()
@@ -119,9 +125,9 @@ async def _persist(
     ]
 
     period = Period(
-        label=label,
-        start_date=doc.period_start,
-        end_date=doc.period_end,
+        label=use_label,
+        start_date=use_start,
+        end_date=use_end,
         source_doc_id=doc.id,
         meta_json=json.dumps(_metadata(doc, chosen, result)),
         provenance_json=json.dumps(_provenance(result)),
@@ -215,8 +221,20 @@ async def recompute_derived(db: AsyncSession, period_id: int) -> None:
     await db.flush()
 
 
-async def ingest_document(document_id: int, db: AsyncSession) -> Dict[str, Any]:
-    """Process an uploaded document end to end. Returns the review proposal."""
+async def ingest_document(
+    document_id: int,
+    db: AsyncSession,
+    column: Optional[int] = None,
+    period_label: Optional[str] = None,
+    start_date: Optional[date] = None,
+    end_date: Optional[date] = None,
+) -> Dict[str, Any]:
+    """Process an uploaded document end to end. Returns the review proposal.
+
+    If column/period_label/start_date/end_date are provided, uses those values
+    (multi-period upload support). Otherwise falls back to the document's stored
+    values.
+    """
     doc = await db.get(Document, document_id)
     if doc is None:
         raise ValueError(f"Unknown document: {document_id}")
@@ -227,15 +245,21 @@ async def ingest_document(document_id: int, db: AsyncSession) -> Dict[str, Any]:
 
     try:
         pages = read_pages(doc.stored_path)
-        column = get_column_for_period(doc.period_start, doc.period_end, pages)
+
+        # Determine which period/column to process
+        use_label = period_label or doc.period_label
+        use_start = start_date or doc.period_start
+        use_end = end_date or doc.period_end
+        use_column = column if column is not None else get_column_for_period(use_start, use_end, pages)
         # Only 2 table columns are supported by the regex parser (0=current, 1=comparative)
-        if column is None or column > 1:
-            column = 0
-        tables = parse_tables(pages, column=column)
-        llm_lines = await extract_structured(pages, doc.period_label or "", column=column)
+        if use_column is None or use_column > 1:
+            use_column = 0
+
+        tables = parse_tables(pages, column=use_column)
+        llm_lines = await extract_structured(pages, use_label or "", column=use_column)
         result = reconcile(tables, llm_lines)
         proposal = build_proposal(result)
-        await _persist(db, doc, result, proposal, len(pages))
+        await _persist(db, doc, result, proposal, len(pages), label=use_label, start_date=use_start, end_date=use_end)
         doc.status = lifecycle.advance(doc.status, lifecycle.EXTRACTED)
         await db.commit()
         return proposal

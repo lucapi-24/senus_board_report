@@ -142,6 +142,10 @@ export interface DocumentSummary {
   error: string | null
   uploaded_at: string | null
   extracted_at: string | null
+  detected_periods?: DetectedPeriod[]
+  periods_manually_edited?: boolean
+  edited_by?: string | null
+  edited_at?: string | null
 }
 
 export interface DocumentDetail extends DocumentSummary {
@@ -173,10 +177,21 @@ async function send<T>(path: string, method: string, body?: unknown): Promise<T 
 }
 
 export interface UploadFields {
-  period_label: string
+  period_label?: string
+  start_date?: string
+  end_date?: string
+  doc_type?: string
+}
+
+export interface DetectedPeriod {
+  label: string
   start_date: string
   end_date: string
-  doc_type?: string
+  column?: number
+  pages?: number[]
+  source?: string
+  score?: number
+  is_primary?: boolean
 }
 
 export const api = {
@@ -242,6 +257,10 @@ export const api = {
   processDocument: (id: number) => send<DocumentSummary>(`/api/documents/${id}/process`, 'POST'),
   publishDocument: (id: number) => send<DocumentSummary>(`/api/documents/${id}/publish`, 'POST'),
   deleteDocument: (id: number) => send<unknown>(`/api/documents/${id}`, 'DELETE'),
+  confirmPeriods: (
+    id: number,
+    body: { period_labels: string[] },
+  ) => send<DocumentSummary>(`/api/documents/${id}/confirm-periods`, 'POST', body),
   updateDocument: (
     id: number,
     body: { period_label?: string; start_date?: string; end_date?: string; doc_type?: string },

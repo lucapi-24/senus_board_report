@@ -54,9 +54,6 @@ export function Ingestion({ role, onDataChanged }: { role?: string; onDataChange
   const [error, setError] = useState('')
 
   const [file, setFile] = useState<File | null>(null)
-  const [periodLabel, setPeriodLabel] = useState('')
-  const [startDate, setStartDate] = useState('')
-  const [endDate, setEndDate] = useState('')
   const [docType, setDocType] = useState('interim_results')
 
   // Inline edit of document metadata
@@ -65,6 +62,10 @@ export function Ingestion({ role, onDataChanged }: { role?: string; onDataChange
   const [editStart, setEditStart] = useState('')
   const [editEnd, setEditEnd] = useState('')
   const [editDocType, setEditDocType] = useState('interim_results')
+
+  // Confirm detected periods for a document
+  const [confirmingDocId, setConfirmingDocId] = useState<number | null>(null)
+  const [confirmingPeriods, setConfirmingPeriods] = useState<string[]>([])
 
   const loadDocuments = async () => {
     const docs = await api.documents()
@@ -118,15 +119,10 @@ export function Ingestion({ role, onDataChanged }: { role?: string; onDataChange
     run('upload', async () => {
       if (!file) throw new Error('Choose a PDF file first')
       const created = await api.uploadDocument(file, {
-        period_label: periodLabel,
-        start_date: startDate,
-        end_date: endDate,
         doc_type: docType,
       })
       setFile(null)
-      setPeriodLabel('')
-      setStartDate('')
-      setEndDate('')
+      setDocType('interim_results')
       await loadDocuments()
       await openDocument(created.id)
     })
@@ -180,6 +176,17 @@ export function Ingestion({ role, onDataChanged }: { role?: string; onDataChange
         setDetail(null)
         setPeriod(null)
       }
+      onDataChanged?.()
+    })
+  }
+
+  const handleConfirmPeriods = async (id: number) => {
+    await run(`confirm-${id}`, async () => {
+      await api.confirmPeriods(id, { period_labels: confirmingPeriods })
+      setConfirmingDocId(null)
+      setConfirmingPeriods([])
+      await loadDocuments()
+      await openDocument(id)
       onDataChanged?.()
     })
   }
@@ -269,23 +276,6 @@ export function Ingestion({ role, onDataChanged }: { role?: string; onDataChange
             {!file && <span className="muted small">No file chosen</span>}
           </div>
           <label className="field">
-            <span>Period label</span>
-            <input
-              type="text"
-              placeholder="FY2026"
-              value={periodLabel}
-              onChange={(e) => setPeriodLabel(e.target.value)}
-            />
-          </label>
-          <label className="field">
-            <span>Start date</span>
-            <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
-          </label>
-          <label className="field">
-            <span>End date</span>
-            <input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} />
-          </label>
-          <label className="field">
             <span>Document type</span>
             <select value={docType} onChange={(e) => setDocType(e.target.value)}>
               <option value="interim_results">Interim results</option>
@@ -296,7 +286,7 @@ export function Ingestion({ role, onDataChanged }: { role?: string; onDataChange
           <button
             type="button"
             className="btn btn--primary"
-            disabled={busy === 'upload'}
+            disabled={busy === 'upload' || !file}
             onClick={handleUpload}
           >
             {busy === 'upload' ? 'Uploading…' : 'Upload'}
@@ -304,6 +294,58 @@ export function Ingestion({ role, onDataChanged }: { role?: string; onDataChange
         </div>
       </section>
       )}
+
+        {/* Period confirmation panel */}
+        {confirmingDocId !== null && (
+          <section className="panel">
+            <div className="panel__head">
+              <h2>Confirm Periods</h2>
+              <span className="panel__hint">
+                Select which detected period(s) to process. The label is derived from the dates
+                (fiscal year ends 30 June).
+              </span>
+            </div>
+            <div className="period-confirm-list">
+              {confirmingPeriods.map((label) => (
+                <div key={label} className="period-confirm-item">
+                  <input
+                    type="checkbox"
+                    checked={confirmingPeriods.includes(label)}
+                    onChange={() => {
+                      setConfirmingPeriods((prev) =>
+                        prev.includes(label) ? prev.filter((l) => l !== label) : [...prev, label]
+                      )
+                    }}
+                  />
+                  <span>{label}</span>
+                </div>
+              ))}
+              {confirmingPeriods.length === 0 && (
+                <p className="muted small">Select at least one period to process.</p>
+              )}
+            </div>
+            <div className="period-confirm-actions">
+              <button
+                type="button"
+                className="btn btn--small btn--outline"
+                onClick={() => {
+                  setConfirmingDocId(null)
+                  setConfirmingPeriods([])
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="btn btn--small btn--primary"
+                disabled={confirmingPeriods.length === 0}
+                onClick={() => handleConfirmPeriods(confirmingDocId!)}
+              >
+                Confirm & Process
+              </button>
+            </div>
+          </section>
+        )}
 
         <section className="panel">
           <h2 className="panel__title">Documents</h2>

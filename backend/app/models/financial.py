@@ -10,6 +10,7 @@ from sqlalchemy import (
     DateTime,
     ForeignKey,
     Text,
+    Boolean,
 )
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -40,6 +41,10 @@ class Document(Base):
     uploaded_at = Column(DateTime(timezone=True), server_default=func.now())
     extracted_at = Column(DateTime(timezone=True), nullable=True)
     raw_json = Column(Text, nullable=True)                  # JSON string of extracted data
+    periods_detected_json = Column(Text, nullable=True)     # JSON: auto-detected periods from document headers
+    periods_manually_edited = Column(Boolean, nullable=False, server_default="false")  # True if user changed dates/label
+    edited_by = Column(String(255), nullable=True)          # Email of user who last edited period dates/label
+    edited_at = Column(DateTime(timezone=True), nullable=True)  # When period dates/label were last manually edited
 
     periods = relationship("Period", backref="source_document", cascade="all, delete-orphan")
 

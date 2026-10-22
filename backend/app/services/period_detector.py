@@ -8,6 +8,13 @@ import dateutil.parser as dparser
 
 from app.services.llm_extract import build_client, annotate_pages
 
+# Senus PLC fiscal year ends 30 June.  Label derivation:
+#   FY{year}  = 1 Jul {year-1} to 30 Jun {year}
+#   HY{year}  = 1 Jul {year-1} to 31 Dec {year-1}   (first half of FY{year})
+#   H1{year}  = 1 Jan {year} to 30 Jun {year}        (calendar half that coincides with FY end)
+FISCAL_YEAR_END_MONTH = 6   # June
+FISCAL_YEAR_END_DAY = 30
+
 PERIOD_CODE_RE = re.compile(r"\b(HY|FY|H1|H2|Q[1-4])\s*(\d{4})\b", re.I)
 DATE_TOKEN_RE = re.compile(
     r"(\d{1,2}[-/\s](?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*[-/\s]\d{4})"
@@ -112,7 +119,133 @@ def _is_period_end(end: date) -> bool:
     (day >= 28), while publication/admission dates can be any day."""
     return end.day >= 28
 
-def detect_periods(pages: List[Tuple[int, str]]) -> List[PeriodCandidate]:
+
+def derive_label(start_date: date, end_date: date) -> str:
+    """Derive a period label (HY2026, FY2025, ...) from start/end dates.
+
+    Senus PLC fiscal year ends 30 June:
+    * FY{year}   = 1 Jul {year-1} to 30 Jun {year}
+    * HY{year}   = 1 Jul {year-1} to 31 Dec {year-1}   (H1 of FY{year})
+    * H1{year}   = 1 Jan {year} to 30 Jun {year}        (calendar half aligned with FY end)
+
+    If the dates don't match a standard pattern, fall back to a descriptive label.
+    """
+    # Twelve-month period ending 30 June -> FY{end.year}
+    if end_date.month == FISCAL_YEAR_END_MONTH and end_date.day == FISCAL_YEAR_END_DAY:
+        months = (end_date.year - start_date.year) * 12 + (end_date.month - start_date.month) + 1
+        if months >= 11:
+            return f"FY{end_date.year}"
+        # Short year ending 30 June -> still FY{end.year} but could be H1
+        return f"H1{end_date.year}"
+
+    # Six-month period ending 31 December -> HY{end.year + 1}
+    if end_date.month == 12 and end_date.day == 31:
+        months = (end_date.year - start_date.year) * 12 + (end_date.month - start_date.month) + 1
+        if months <= 7:
+            return f"HY{end_date.year + 1}"
+        # Twelve months ending 31 Dec doesn't match Senus FY; label by year
+        return f"FY{end_date.year}"
+
+    # Six-month period ending 30 June -> H1{end.year}
+    if end_date.month == 6 and end_date.day == 30:
+        months = (end_date.year - start_date.year) * 12 + (end_date.month - start_date.month) + 1
+        if months <= 7:
+            return f"H1{end_date.year}"
+        return f"FY{end_date.year}"
+
+    # Fallback: generic label based on end year and approximate length
+    months = (end_date.year - start_date.year) * 12 + (end_date.month - start_date.month) + 1
+    if months <= 7:
+        return f"HY{end_date.year}"
+    return f"FY{end_date.year}"
+
+
+@dataclass
+class DetectedPeriod:
+    """A period detected in a document, ready to be presented for confirmation."""
+    label: str
+    start_date: date
+    end_date: date
+    column: Optional[int]       # Table column index (0 = leftmost/most recent)
+    pages: List[int]            # Pages where this period was detected
+    source: str                 # 'regex' or 'llm'
+    score: float
+    is_primary: bool            # Most likely main period (first/most recent)
+
+
+def detect_all_periods(pages: List[Tuple[int, str]]) -> List[DetectedPeriod]:
+    """Detect all reporting periods present in a document.
+
+    Scans table header rows (lines with multiple dates side-by-side) to find
+    each column's period, then derives a label for each.  Returns periods
+    sorted left-to-right (column 0 = most recent).
+
+    If no table headers are found, falls back to individual date detection.
+    Periods with ambiguous dates (e.g. "Current period") are excluded — the
+    caller should mark the document as pending manual confirmation.
+    """
+    mapping = period_to_column_map(pages)
+
+    detected: List[DetectedPeriod] = []
+    seen_keys: set = set()
+
+    for (start_d, end_d), column in sorted(mapping.items(), key=lambda x: x[1]):
+        key = (start_d, end_d)
+        if key in seen_keys:
+            continue
+        seen_keys.add(key)
+
+        label = derive_label(start_d, end_d)
+
+        # Find pages where this period's end date appears
+        pages_found: List[int] = []
+        for pnum, text in pages:
+            if not text:
+                continue
+            tl = text.lower()
+            end_str = end_d.strftime("%d-%b-%Y").replace(" ", "-")
+            # Try several date formats
+            patterns = [
+                end_d.strftime("%d %B %Y"),
+                end_d.strftime("%d-%b-%y"),
+                end_d.strftime("%d-%b-%Y"),
+                end_d.strftime("%d %b %Y"),
+                f"{end_d.day}-{end_d.strftime('%b')}-{end_d.year}",
+            ]
+            if any(p.lower() in tl for p in patterns):
+                pages_found.append(pnum)
+
+        detected.append(DetectedPeriod(
+            label=label,
+            start_date=start_d,
+            end_date=end_d,
+            column=column,
+            pages=pages_found,
+            source='regex',
+            score=50.0,
+            is_primary=(column == 0),
+        ))
+
+    # If no table headers found, fall back to individual date candidates
+    if not detected:
+        cands = detect_periods(pages)
+        for c in cands:
+            if c.start_date and c.end_date and c.label:
+                key = (c.start_date, c.end_date)
+                if key not in seen_keys:
+                    seen_keys.add(key)
+                    detected.append(DetectedPeriod(
+                        label=c.label or derive_label(c.start_date, c.end_date),
+                        start_date=c.start_date,
+                        end_date=c.end_date,
+                        column=None,
+                        pages=[c.page] if c.page else [],
+                        source=c.source,
+                        score=c.score,
+                        is_primary=False,
+                    ))
+
+    return detected
     """Detect all period candidates in the document using regex/dateutil.
 
     Returns every date found with its inferred label/score.
