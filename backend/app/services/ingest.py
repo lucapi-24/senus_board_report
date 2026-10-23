@@ -60,6 +60,19 @@ def build_proposal(result: Dict[str, Any]) -> Dict[str, Any]:
     return proposal
 
 
+def _store_period_proposal(
+    raw_json: str | None, label: str, proposal: Dict[str, Any]
+) -> str:
+    """Keep each extracted period's review proposal instead of overwriting it."""
+    reviews: Dict[str, Any] = {}
+    if raw_json:
+        stored = json.loads(raw_json)
+        if isinstance(stored, dict) and isinstance(stored.get("periods"), dict):
+            reviews = stored["periods"]
+    reviews[label] = proposal
+    return json.dumps({"periods": reviews})
+
+
 def _chosen(result: Dict[str, Any]) -> Dict[str, Dict[str, float]]:
     """label -> value, using each item's chosen value (deterministic preferred)."""
     chosen: Dict[str, Dict[str, float]] = {}
@@ -178,7 +191,7 @@ async def _persist(
 
     doc.page_count = page_count
     doc.extracted_at = datetime.now(timezone.utc)
-    doc.raw_json = json.dumps(proposal)
+    doc.raw_json = _store_period_proposal(doc.raw_json, use_label, proposal)
 
 
 async def recompute_derived(db: AsyncSession, period_id: int) -> None:

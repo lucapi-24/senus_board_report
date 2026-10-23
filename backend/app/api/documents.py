@@ -17,7 +17,6 @@ from app.schemas.documents import (
     DocumentDetailResponse,
     DocumentResponse,
     DocumentUpdate,
-    PeriodConfirmRequest,
 )
 from app.schemas.financial import PeriodResponse
 from app.services import lifecycle
@@ -129,9 +128,13 @@ async def get_document(
     detail = DocumentDetailResponse.model_validate(doc)
     if doc.raw_json:
         try:
-            detail.review = json.loads(doc.raw_json)
+            stored_review = json.loads(doc.raw_json)
         except json.JSONDecodeError:
-            pass
+            stored_review = None
+        if isinstance(stored_review, dict) and isinstance(stored_review.get("periods"), dict):
+            detail.reviews_by_period = stored_review["periods"]
+        elif stored_review is not None:
+            detail.review = stored_review
     return detail
 
 
@@ -157,13 +160,15 @@ async def process_document(
     detected = []
     if doc.periods_detected_json:
         try:
-            import json as _json
-            detected = _json.loads(doc.periods_detected_json)
-        except Exception:
-            detected = []
+            detected = json.loads(doc.periods_detected_json)
+        except json.JSONDecodeError as exc:
+            raise HTTPException(status_code=500, detail="Stored detected periods are invalid.") from exc
+        if not isinstance(detected, list) or any(not isinstance(period, dict) for period in detected):
+            raise HTTPException(status_code=500, detail="Stored detected periods are invalid.")
 
     if detected:
-        # Process each detected period using its column
+        # The PDF's detected columns are processed together without a manual
+        # label-confirmation step.
         for pd in detected:
             column = pd.get("column", 0)
             start = pd.get("start_date")
@@ -211,8 +216,14 @@ async def update_document(
     if doc is None:
         raise HTTPException(status_code=404, detail="Document not found")
 
-    if doc.status == "published":
-        raise HTTPException(status_code=409, detail="Cannot edit a published document")
+    if doc.status == "published" and any(
+        value is not None
+        for value in (payload.period_label, payload.start_date, payload.end_date)
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail="Cannot change the reporting period of a published document",
+        )
 
     dates_changed = False
     if payload.start_date is not None:
@@ -258,62 +269,6 @@ async def update_document(
     return _reload(doc)
 
 
-@router.post("/{document_id}/confirm-periods", response_model=DocumentResponse)
-async def confirm_periods(
-    document_id: int,
-    payload: PeriodConfirmRequest,
-    db: AsyncSession = Depends(get_db),
-    user: User = Depends(require_admin),
-):
-    """Confirm which detected periods to process for this document.
-
-    Stores the confirmed period labels on the document so that a subsequent
-    /process call knows which periods to extract.
-    """
-    doc = await db.get(Document, document_id)
-    if doc is None:
-        raise HTTPException(status_code=404, detail="Document not found")
-
-    # Validate that the labels exist in detected periods
-    detected = []
-    if doc.periods_detected_json:
-        try:
-            import json as _json
-            detected = _json.loads(doc.periods_detected_json)
-        except Exception:
-            detected = []
-
-    detected_labels = {p["label"] for p in detected}
-    for label in payload.period_labels:
-        if label not in detected_labels:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Label '{label}' not in detected periods: {sorted(detected_labels)}",
-            )
-
-    doc.period_label = payload.period_labels[0] if payload.period_labels else None
-    doc.periods_manually_edited = True
-    doc.edited_by = user.email
-    doc.edited_at = datetime.now(timezone.utc)
-
-    # Store confirmed labels in confirmed_period_labels_json for reference
-    import json as _json
-    doc.confirmed_period_labels_json = _json.dumps(payload.period_labels)
-
-    db.add(
-        AuditLog(
-            user_email=user.email,
-            action="confirm_periods",
-            entity="document",
-            entity_id=doc.id,
-            after_json=_json.dumps({"confirmed_period_labels": payload.period_labels}),
-        )
-    )
-    await db.commit()
-    await db.refresh(doc)
-    return _reload(doc)
-
-
 @router.get("/{document_id}/periods", response_model=List[PeriodResponse])
 async def list_document_periods(
     document_id: int,
@@ -337,16 +292,11 @@ async def delete_document(
     doc = await db.get(Document, document_id)
     if doc is None:
         raise HTTPException(status_code=404, detail="Document not found")
-    try:
-        if doc.stored_path:
-            from pathlib import Path
-
-            p = Path(doc.stored_path)
-            if p.exists():
-                p.unlink()
-    except Exception:
-        pass
-    db.delete(doc)
+    if doc.stored_path:
+        path = Path(doc.stored_path)
+        if path.exists():
+            path.unlink()
+    await db.delete(doc)
     db.add(
         AuditLog(user_email=user.email, action="delete", entity="document", entity_id=document_id)
     )

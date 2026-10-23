@@ -21,9 +21,14 @@ interface MergedItem extends ReconciledItem {
   review_status?: string | null
 }
 
-function merge(review: ReconciledItem[] = [], current: LineItem[] = []): MergedItem[] {
+function merge(
+  review: ReconciledItem[] = [],
+  current: LineItem[] = [],
+  statement: ReconciledItem['statement'],
+): MergedItem[] {
   const byLabel = new Map(current.map((i) => [i.line_item, i]))
-  return review.map((item) => {
+  const reviewed = new Set(review.map((item) => item.line_item))
+  const merged = review.map((item) => {
     const live = byLabel.get(item.line_item)
     return {
       ...item,
@@ -31,6 +36,21 @@ function merge(review: ReconciledItem[] = [], current: LineItem[] = []): MergedI
       review_status: live?.review_status,
     }
   })
+  const missingFromReview = current
+    .filter((item) => !reviewed.has(item.line_item))
+    .map((item) => ({
+      statement,
+      line_item: item.line_item,
+      value: item.value_eur,
+      status: item.review_status === 'reported' ? 'matched' : 'regex_only',
+      confidence: item.confidence ?? 0,
+      page: item.page ?? null,
+      source: 'database',
+      llm_value: item.original_value ?? null,
+      regex_value: item.original_value != null ? item.value_eur : null,
+      review_status: item.review_status,
+    }))
+  return [...merged, ...missingFromReview]
 }
 
 function formatDate(dateStr: string): string {
@@ -57,9 +77,6 @@ export function Ingestion({ role, onDataChanged }: { role?: string; onDataChange
   const [editEnd, setEditEnd] = useState('')
   const [editDocType, setEditDocType] = useState('interim_results')
 
-  const [confirmingDocId, setConfirmingDocId] = useState<number | null>(null)
-  const [confirmingPeriods, setConfirmingPeriods] = useState<string[]>([])
-
   const loadDocuments = async () => {
     const docs = await api.documents()
     setDocuments(docs)
@@ -74,31 +91,23 @@ export function Ingestion({ role, onDataChanged }: { role?: string; onDataChange
     return docs
   }
 
-  const openDocument = async (id: number) => {
+  const openDocument = async (id: number, preferredPeriodLabel?: string) => {
     setError('')
     const detailData = await api.document(id)
     setDetail(detailData)
     try {
       const docPeriods = await api.documentPeriods(id)
       setPeriods(docPeriods)
-      if (docPeriods.length > 0) {
-        const periodDetail = await api.periodDetail(docPeriods[0].label)
+      const selectedPeriod =
+        docPeriods.find((candidate) => candidate.label === preferredPeriodLabel) ?? docPeriods[0]
+      if (selectedPeriod) {
+        const periodDetail = await api.periodDetail(selectedPeriod.label)
         setPeriod(periodDetail)
       } else {
         setPeriod(null)
       }
     } catch {
       setPeriods([])
-      setPeriod(null)
-    }
-  }
-
-  const openPeriod = async (periodLabel: string) => {
-    setError('')
-    try {
-      const periodDetail = await api.periodDetail(periodLabel)
-      setPeriod(periodDetail)
-    } catch {
       setPeriod(null)
     }
   }
@@ -138,12 +147,16 @@ export function Ingestion({ role, onDataChanged }: { role?: string; onDataChange
       })
       setFile(null)
       setDocType('interim_results')
+      try {
+        await api.processDocument(created.id)
+      } catch (error) {
+        await loadDocuments()
+        await openDocument(created.id)
+        throw error
+      }
       await loadDocuments()
       await openDocument(created.id)
-      if (created.detected_periods && created.detected_periods.length > 0) {
-        setConfirmingDocId(created.id)
-        setConfirmingPeriods(created.detected_periods.map((p) => p.label))
-      }
+      onDataChanged?.()
     })
 
   const handleProcess = (id: number) =>
@@ -163,32 +176,21 @@ export function Ingestion({ role, onDataChanged }: { role?: string; onDataChange
         value = Number(entered.replace(/[, ]/g, ''))
         if (!Number.isFinite(value)) throw new Error('Enter a valid number')
       }
-      setPeriod((prev) => {
-        if (!prev) return prev
-        return {
-          ...prev,
-          pnl: prev.pnl.map((i) =>
-            i.line_item === item.line_item
-              ? { ...i, value_eur: value ?? i.value_eur, review_status: action === 'correct' ? 'corrected' : 'confirmed' }
-              : i
-          ),
-          balance_sheet: prev.balance_sheet.map((i) =>
-            i.line_item === item.line_item
-              ? { ...i, value_eur: value ?? i.value_eur, review_status: action === 'correct' ? 'corrected' : 'confirmed' }
-              : i
-          ),
-          cash_flow: prev.cash_flow.map((i) =>
-            i.line_item === item.line_item
-              ? { ...i, value_eur: value ?? i.value_eur, review_status: action === 'correct' ? 'corrected' : 'confirmed' }
-              : i
-          ),
-        }
-      })
-      await api.updateItem(period?.label ?? detail?.period_label ?? '', {
+      const updatedItem = await api.updateItem(period?.label ?? detail?.period_label ?? '', {
         statement: item.statement,
         line_item: item.line_item,
         action,
         value,
+      })
+      if (!updatedItem) throw new Error('The corrected item was not returned by the API')
+      setPeriod((prev) => {
+        if (!prev) return prev
+        const rows = prev[item.statement]
+        const exists = rows.some((row) => row.line_item === updatedItem.line_item)
+        const updatedRows = exists
+          ? rows.map((row) => (row.line_item === updatedItem.line_item ? updatedItem : row))
+          : [...rows, updatedItem]
+        return { ...prev, [item.statement]: updatedRows }
       })
       onDataChanged?.()
     })
@@ -219,32 +221,29 @@ export function Ingestion({ role, onDataChanged }: { role?: string; onDataChange
     if (!window.confirm(`Delete document ${id}? This cannot be undone.`)) return
     await run(`delete-${id}`, async () => {
       await api.deleteDocument(id)
-      setDocuments(documents.filter((d) => d.id !== id))
+      await loadDocuments()
+      setDocPeriods((prev) => {
+        const next = new Map(prev)
+        next.delete(id)
+        return next
+      })
       if (detail?.id === id) {
         setDetail(null)
         setPeriod(null)
+        setPeriods([])
       }
-      onDataChanged?.()
-    })
-  }
-
-  const handleConfirmPeriods = async (id: number) => {
-    await run(`confirm-${id}`, async () => {
-      await api.confirmPeriods(id, { period_labels: confirmingPeriods })
-      setConfirmingDocId(null)
-      setConfirmingPeriods([])
-      await loadDocuments()
-      await openDocument(id)
       onDataChanged?.()
     })
   }
 
   const handleEditSave = async (id: number) => {
     await run(`edit-${id}`, async () => {
+      const editedDoc = documents.find((document) => document.id === id)
+      const isPublished = editedDoc?.status === 'published'
       await api.updateDocument(id, {
-        period_label: editLabel || undefined,
-        start_date: editStart || undefined,
-        end_date: editEnd || undefined,
+        period_label: isPublished ? undefined : editLabel || undefined,
+        start_date: isPublished ? undefined : editStart || undefined,
+        end_date: isPublished ? undefined : editEnd || undefined,
         doc_type: editDocType || undefined,
       })
       setEditingDocId(null)
@@ -274,6 +273,18 @@ export function Ingestion({ role, onDataChanged }: { role?: string; onDataChange
         (i) => i.review_status === 'flagged',
       ).length
     : 0
+  const review = period
+    ? detail?.reviews_by_period
+      ? detail.reviews_by_period[period.label] ?? null
+      : detail?.review ?? null
+    : null
+  const hasContingentConsideration =
+    detail?.reviews_by_period
+      ? Object.values(detail.reviews_by_period).some((periodReview) =>
+          periodReview.balance_sheet.some((item) => item.line_item === 'Contingent consideration'),
+        )
+      : detail?.review?.balance_sheet.some((item) => item.line_item === 'Contingent consideration') ??
+        false
 
   return (
     <div className="ingestion">
@@ -336,59 +347,7 @@ export function Ingestion({ role, onDataChanged }: { role?: string; onDataChange
                 disabled={busy === 'upload' || !file}
                 onClick={handleUpload}
               >
-                {busy === 'upload' ? 'Uploading…' : 'Upload'}
-              </button>
-            </div>
-          </section>
-        )}
-
-        {/* Period confirmation panel */}
-        {confirmingDocId !== null && (
-          <section className="panel">
-            <div className="panel__head">
-              <h2>Confirm Periods</h2>
-              <span className="panel__hint">
-                Select which detected period(s) to process. The label is derived from the dates
-                (fiscal year ends 30 June).
-              </span>
-            </div>
-            <div className="period-confirm-list">
-              {confirmingPeriods.map((label) => (
-                <div key={label} className="period-confirm-item">
-                  <input
-                    type="checkbox"
-                    checked={confirmingPeriods.includes(label)}
-                    onChange={() => {
-                      setConfirmingPeriods((prev) =>
-                        prev.includes(label) ? prev.filter((l) => l !== label) : [...prev, label]
-                      )
-                    }}
-                  />
-                  <span>{label}</span>
-                </div>
-              ))}
-              {confirmingPeriods.length === 0 && (
-                <p className="muted small">Select at least one period to process.</p>
-              )}
-            </div>
-            <div className="period-confirm-actions">
-              <button
-                type="button"
-                className="btn btn--small btn--outline"
-                onClick={() => {
-                  setConfirmingDocId(null)
-                  setConfirmingPeriods([])
-                }}
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                className="btn btn--small btn--primary"
-                disabled={confirmingPeriods.length === 0}
-                onClick={() => handleConfirmPeriods(confirmingDocId!)}
-              >
-                Confirm & Process
+                {busy === 'upload' ? 'Uploading & processing…' : 'Upload'}
               </button>
             </div>
           </section>
@@ -433,6 +392,7 @@ export function Ingestion({ role, onDataChanged }: { role?: string; onDataChange
                             <input
                               type="text"
                               value={editLabel}
+                              disabled={doc.status === 'published'}
                               onChange={(e) => setEditLabel(e.target.value)}
                               placeholder="HY2026"
                             />
@@ -442,6 +402,7 @@ export function Ingestion({ role, onDataChanged }: { role?: string; onDataChange
                             <input
                               type="date"
                               value={editStart}
+                              disabled={doc.status === 'published'}
                               onChange={(e) => setEditStart(e.target.value)}
                             />
                           </label>
@@ -450,6 +411,7 @@ export function Ingestion({ role, onDataChanged }: { role?: string; onDataChange
                             <input
                               type="date"
                               value={editEnd}
+                              disabled={doc.status === 'published'}
                               onChange={(e) => setEditEnd(e.target.value)}
                             />
                           </label>
@@ -464,6 +426,11 @@ export function Ingestion({ role, onDataChanged }: { role?: string; onDataChange
                           <button type="button" className="btn btn--small" onClick={handleEditCancel}>
                             Cancel
                           </button>
+                          {doc.status === 'published' && (
+                            <span className="muted small">
+                              Published periods are locked; only the document type can be changed.
+                            </span>
+                          )}
                         </>
                       ) : (
                         <>
@@ -489,7 +456,7 @@ export function Ingestion({ role, onDataChanged }: { role?: string; onDataChange
                               onClick={() => {
                                 const firstPeriod = docPeriodsList[0]
                                 if (firstPeriod) {
-                                  openPeriod(firstPeriod.label)
+                                  openDocument(doc.id, firstPeriod.label)
                                 } else {
                                   openDocument(doc.id)
                                 }
@@ -503,7 +470,7 @@ export function Ingestion({ role, onDataChanged }: { role?: string; onDataChange
                               Processing…
                             </button>
                           )}
-                          {isAdmin && doc.status !== 'published' && (
+                          {isAdmin && (
                             <button
                               type="button"
                               className="btn btn--small btn--outline"
@@ -518,7 +485,7 @@ export function Ingestion({ role, onDataChanged }: { role?: string; onDataChange
                               Edit details
                             </button>
                           )}
-                          {isAdmin && doc.status !== 'published' && (
+                          {isAdmin && (
                             <button
                               type="button"
                               className="btn btn--small btn--danger"
@@ -540,7 +507,7 @@ export function Ingestion({ role, onDataChanged }: { role?: string; onDataChange
 
           {detail?.error && <div className="callout callout--error">{detail.error}</div>}
 
-          {detail && !detail.review?.summary && (
+          {detail && !review?.summary && (
             <section className="panel">
               <div className="callout callout--info">
                 This document has not been processed yet. Press <strong>Process</strong> to extract the data before reviewing.
@@ -548,7 +515,7 @@ export function Ingestion({ role, onDataChanged }: { role?: string; onDataChange
             </section>
           )}
 
-          {detail && detail.review?.summary && period && (
+          {detail && review?.summary && period && (
             <section className="panel review">
               <div className="review__head">
                 <div className="review__title-row">
@@ -572,7 +539,7 @@ export function Ingestion({ role, onDataChanged }: { role?: string; onDataChange
                   )}
                 </div>
                 <div className="review__summary">
-                  <span className="pill pill--ok">{detail.review.summary.matched} matched</span>
+                  <span className="pill pill--ok">{review.summary.matched} matched</span>
                   <span className="pill pill--warn">{pending} to review</span>
                   {isAdmin && (
                     <>
@@ -587,9 +554,14 @@ export function Ingestion({ role, onDataChanged }: { role?: string; onDataChange
                       <button
                         type="button"
                         className="btn btn--small"
-                        onClick={() => window.open(api.documentFileUrl(detail.id), '_blank')}
+                        disabled={busy === 'view-document'}
+                        onClick={() =>
+                          run('view-document', async () => {
+                            await api.openDocumentFile(detail.id)
+                          })
+                        }
                       >
-                        View Document
+                        {busy === 'view-document' ? 'Opening…' : 'View Document'}
                       </button>
                     </>
                   )}
@@ -597,7 +569,25 @@ export function Ingestion({ role, onDataChanged }: { role?: string; onDataChange
               </div>
 
               {(['pnl', 'balance_sheet', 'cash_flow'] as const).map((statement) => {
-                const merged = merge(detail.review![statement], period[statement])
+                const merged = merge(review![statement], period[statement], statement)
+                if (
+                  statement === 'balance_sheet' &&
+                  hasContingentConsideration &&
+                  !merged.some((item) => item.line_item === 'Contingent consideration')
+                ) {
+                  merged.push({
+                    statement: 'balance_sheet',
+                    line_item: 'Contingent consideration',
+                    value: 0,
+                    status: 'not_reported',
+                    confidence: 0,
+                    page: null,
+                    source: 'not_reported',
+                    llm_value: null,
+                    regex_value: null,
+                    review_status: null,
+                  })
+                }
                 return (
                   <div key={statement} className="review__group">
                     <h3 className="review__subtitle">{STATEMENT_LABELS[statement] ?? statement}</h3>

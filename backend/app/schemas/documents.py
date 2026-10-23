@@ -41,6 +41,7 @@ class DocumentResponse(BaseModel):
 
 class DocumentDetailResponse(DocumentResponse):
     review: Optional[Dict[str, Any]] = None
+    reviews_by_period: Optional[Dict[str, Dict[str, Any]]] = None
 
 
 class DocumentUpdate(BaseModel):
@@ -48,7 +49,3 @@ class DocumentUpdate(BaseModel):
     start_date: Optional[date] = None
     end_date: Optional[date] = None
     doc_type: Optional[str] = None
-
-
-class PeriodConfirmRequest(BaseModel):
-    period_labels: List[str]

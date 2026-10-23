@@ -67,6 +67,8 @@ export interface LineItem {
   original_value?: number | null
 }
 
+export type FinancialStatement = 'pnl' | 'balance_sheet' | 'cash_flow'
+
 export interface KPIValue {
   metric: string
   value: number
@@ -112,7 +114,7 @@ export interface AIInsight {
 }
 
 export interface ReconciledItem {
-  statement: string
+  statement: FinancialStatement
   line_item: string
   value: number
   status: string
@@ -150,6 +152,7 @@ export interface DocumentSummary {
 
 export interface DocumentDetail extends DocumentSummary {
   review: ReviewPayload | null
+  reviews_by_period?: Record<string, ReviewPayload> | null
 }
 
 async function get<T>(path: string): Promise<T> {
@@ -229,7 +232,27 @@ export const api = {
   documents: () => get<DocumentSummary[]>('/api/documents'),
   document: (id: number) => get<DocumentDetail>(`/api/documents/${id}`),
   documentPeriods: (id: number) => get<Period[]>(`/api/documents/${id}/periods`),
-  documentFileUrl: (id: number) => `${API_BASE}/api/documents/${id}/file`,
+  openDocumentFile: async (id: number) => {
+    const viewer = window.open('about:blank', '_blank')
+    if (!viewer) throw new Error('Allow pop-ups to view the source document')
+    viewer.opener = null
+
+    try {
+      const res = await fetch(`${API_BASE}/api/documents/${id}/file`, {
+        headers: authHeaders(),
+      })
+      if (!res.ok) {
+        onUnauthorized(res.status)
+        throw new Error(`Could not open document: ${res.status} ${res.statusText}`)
+      }
+      const objectUrl = URL.createObjectURL(await res.blob())
+      viewer.location.href = objectUrl
+      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 10 * 60 * 1000)
+    } catch (error) {
+      viewer.close()
+      throw error
+    }
+  },
   uploadDocument: async (file: File, fields: UploadFields) => {
     const form = new FormData()
     form.append('file', file)
@@ -258,17 +281,18 @@ export const api = {
   processDocument: (id: number) => send<DocumentSummary>(`/api/documents/${id}/process`, 'POST'),
   publishDocument: (id: number) => send<DocumentSummary>(`/api/documents/${id}/publish`, 'POST'),
   deleteDocument: (id: number) => send<unknown>(`/api/documents/${id}`, 'DELETE'),
-  confirmPeriods: (
-    id: number,
-    body: { period_labels: string[] },
-  ) => send<DocumentSummary>(`/api/documents/${id}/confirm-periods`, 'POST', body),
   updateDocument: (
     id: number,
     body: { period_label?: string; start_date?: string; end_date?: string; doc_type?: string },
   ) => send<DocumentSummary>(`/api/documents/${id}`, 'PATCH', body),
   updateItem: (
     label: string,
-    body: { statement: string; line_item: string; action: 'confirm' | 'correct'; value?: number },
+    body: {
+      statement: FinancialStatement
+      line_item: string
+      action: 'confirm' | 'correct'
+      value?: number
+    },
   ) => send<LineItem>(`/api/periods/${label}/items`, 'PATCH', body),
   publishPeriod: (label: string) => send<Period>(`/api/periods/${label}/publish`, 'POST'),
 }

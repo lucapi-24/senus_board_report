@@ -78,6 +78,7 @@ def test_balance_sheet_stated_subtotals():
 
 def test_balance_sheet_wrapped_and_suffixed_labels():
     assert result["balance_sheet"]["Creditors > 1yr"] == Decimal("-76474")
+    assert result["balance_sheet"]["Contingent consideration"] == Decimal("-850000")
     assert result["balance_sheet"]["Share Capital"] == Decimal("25000")
     assert result["balance_sheet"]["Equity"] == Decimal("561081")
 

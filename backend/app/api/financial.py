@@ -192,7 +192,7 @@ async def update_item(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(require_admin),
 ):
-    """Confirm a flagged figure as-is, or correct it to a human-entered value."""
+    """Confirm/correct a figure, or add a missing line with a manual value."""
     model = ITEM_MODELS.get(payload.statement)
     if model is None:
         raise HTTPException(status_code=400, detail=f"Unknown statement: {payload.statement}")
@@ -211,17 +211,28 @@ async def update_item(
         )
     ).scalars().first()
     if item is None:
-        raise HTTPException(status_code=404, detail="Item not found in this period")
-
-    before = _item_snapshot(item)
-    if payload.action == "confirm":
-        item.review_status = "confirmed"
-    else:
-        if payload.value is None:
+        if payload.action == "correct" and payload.value is None:
             raise HTTPException(status_code=400, detail="A value is required to correct an item")
-        item.value_eur = Decimal(str(payload.value))
-        item.review_status = "corrected"
-    item.confidence = 1.0
+        value = Decimal(str(payload.value)) if payload.value is not None else Decimal("0")
+        item = model(
+            period_id=period.id,
+            line_item=payload.line_item,
+            value_eur=value,
+            review_status="confirmed" if payload.action == "confirm" else "corrected",
+            confidence=1.0,
+        )
+        db.add(item)
+        before = None
+    else:
+        before = _item_snapshot(item)
+        if payload.action == "confirm":
+            item.review_status = "confirmed"
+        else:
+            if payload.value is None:
+                raise HTTPException(status_code=400, detail="A value is required to correct an item")
+            item.value_eur = Decimal(str(payload.value))
+            item.review_status = "corrected"
+        item.confidence = 1.0
     await db.flush()
 
     db.add(
