@@ -29,6 +29,7 @@ import {
   type FinancialSummary,
   type PeriodDetail,
   type AIInsight,
+  type KPIValue,
   toNumber,
   formatCompactEur,
   formatPct,
@@ -38,21 +39,19 @@ import { KpiCard } from './KpiCard'
 const CHART_COLORS = ['#20948B', '#023C28', '#FFBC7D', '#5FB3AC', '#8FBF9F']
 
 const COST_LABELS = ['Cost of sales', 'Distribution costs', 'Administrative expenses']
-
-function shiftYear(iso: string, years: number): string {
-  const [y, m, d] = iso.split('-').map(Number)
-  return `${y + years}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`
-}
-
-function monthSpan(period: { start_date: string; end_date: string }): number {
-  const [y1, m1] = period.start_date.split('-').map(Number)
-  const [y2, m2] = period.end_date.split('-').map(Number)
-  return (y2 - y1) * 12 + (m2 - m1)
+const DEFAULT_KPI_NOTES: Record<string, string> = {
+  revenue_mom: 'Monthly revenue data is not available.',
+  sales_channels: 'Revenue by sales channel is not available.',
+  bookings: 'Bookings data is not available.',
+  customer_accounts: 'Customer account data is not reported for this period.',
+  dscr: 'Operating cash flow or debt service inputs are unavailable.',
+  runway_months: 'Cash runway requires cash and negative free cash flow.',
 }
 
 interface BridgeStep {
   label: string
   value: number
+  origin: 'reported' | 'derived'
   total?: boolean
   page?: number
 }
@@ -60,8 +59,19 @@ interface BridgeStep {
 interface RatioItem {
   label: string
   value: string
+  origin?: string
+  formula?: string | null
   note?: string
   tone?: 'neg' | 'pos'
+}
+
+function originLabel(origin?: string | null): string {
+  if (origin === 'reported' || origin === 'derived') return origin
+  return 'n/d'
+}
+
+function negativeTone(value: number | null | undefined): 'neg' | undefined {
+  return value != null && value < 0 ? 'neg' : undefined
 }
 
 function RatioPanel({ title, hint, items }: { title: string; hint?: string; items: RatioItem[] }) {
@@ -75,7 +85,12 @@ function RatioPanel({ title, hint, items }: { title: string; hint?: string; item
         {items.map((item) => (
           <li key={item.label} className="ratios__row">
             <div className="ratios__main">
-              <span className="ratios__label">{item.label}</span>
+              <span className="ratios__label">
+                {item.label}
+                <span className="data-origin" title={item.formula ?? item.note ?? undefined}>
+                  {originLabel(item.origin)}
+                </span>
+              </span>
               <span className={`ratios__value ${item.tone ? `is-${item.tone}` : ''}`}>
                 {item.value}
               </span>
@@ -169,42 +184,49 @@ export function Dashboard({ summary, selected }: DashboardProps) {
   )
 
   const kpiMap = useMemo(() => {
-    const map: Record<string, number> = {}
-    detail?.kpis.forEach((k) => (map[k.metric] = toNumber(k.value)))
+    const map: Record<string, KPIValue> = {}
+    detail?.kpis.forEach((k) => (map[k.metric] = k))
     return map
   }, [detail])
 
+  const metricValue = (metric: string): number | null => kpiMap[metric]?.value ?? null
+  const metricOrigin = (metric: string): string => originLabel(kpiMap[metric]?.kind)
+  const metricFormula = (metric: string): string | null => kpiMap[metric]?.formula ?? null
+  const metricNote = (metric: string): string | undefined =>
+    kpiMap[metric]?.note ?? DEFAULT_KPI_NOTES[metric]
+
   const revenue = toNumber(current?.revenue)
   const operatingLoss = toNumber(current?.operating_loss)
-  const operatingMargin = revenue !== 0 ? (operatingLoss / revenue) * 100 : 0
+  const operatingMargin = current?.operating_margin ?? null
+  const comparableSummary = current
+    ? summary.filter((period) => period.duration_months === current.duration_months)
+    : []
 
-  const compareData = summary.map((s) => ({
+  const compareData = comparableSummary.map((s) => ({
     name: s.period.label,
     Revenue: toNumber(s.revenue),
     'Gross Profit': toNumber(s.gross_profit),
     'Operating Loss': toNumber(s.operating_loss),
   }))
 
-  const marginData = summary.map((s) => {
-    const rev = toNumber(s.revenue)
-    const op = toNumber(s.operating_loss)
-    return {
-      name: s.period.label,
-      'Gross Margin': s.gross_margin ?? 0,
-      'Operating Margin': rev !== 0 ? (op / rev) * 100 : 0,
-    }
-  })
+  const marginData = comparableSummary.map((s) => ({
+    name: s.period.label,
+    'Gross Margin': s.gross_margin,
+    'Operating Margin': s.operating_margin,
+  }))
 
   const costData = useMemo(() => {
     if (!detail) return []
     return COST_LABELS.map((label) => ({
       name: label,
       value: toNumber(detail.pnl.find((p) => p.line_item === label)?.value_eur),
-    })).filter((c) => c.value > 0)
+    })).filter((cost): cost is { name: string; value: number } =>
+      cost.value !== null && cost.value > 0,
+    )
   }, [detail])
 
   const cf = useMemo(() => {
-    const map: Record<string, number> = {}
+    const map: Record<string, number | null> = {}
     detail?.cash_flow.forEach((c) => (map[c.line_item] = toNumber(c.value_eur)))
     return map
   }, [detail])
@@ -230,61 +252,81 @@ export function Dashboard({ summary, selected }: DashboardProps) {
   const bridge = useMemo(() => {
     if (!detail || detail.cash_flow.length === 0) return [] as BridgeStep[]
     const p = detail.provenance
+    const depreciation = cf['Depreciation']
+    const workingCapital = cf['Working capital movements']
+    const interestPaid = cf['Interest paid']
+    const capex = cf['Capex']
+    if (
+      operatingLoss === null ||
+      depreciation == null ||
+      workingCapital == null ||
+      interestPaid == null ||
+      capex == null
+    ) {
+      return [] as BridgeStep[]
+    }
     const steps: BridgeStep[] = [
-      { label: 'Operating loss', value: operatingLoss, page: p?.pnl?.['Group operating loss'] },
-      { label: 'Depreciation', value: cf['Depreciation'] ?? 0, page: p?.cash_flow?.['Depreciation'] },
+      {
+        label: 'Operating loss',
+        value: operatingLoss,
+        origin: 'reported',
+        page: p?.pnl?.['Group operating loss'],
+      },
+      { label: 'Depreciation', value: depreciation, origin: 'reported', page: p?.cash_flow?.['Depreciation'] },
       {
         label: 'Working capital',
-        value: cf['Working capital movements'] ?? 0,
+        value: workingCapital,
+        origin: 'reported',
         page: p?.cash_flow?.['Working capital movements'],
       },
-      { label: 'Interest paid', value: cf['Interest paid'] ?? 0, page: p?.cash_flow?.['Interest paid'] },
-      { label: 'Capex', value: cf['Capex'] ?? 0, page: p?.cash_flow?.['Capex'] },
+      { label: 'Interest paid', value: interestPaid, origin: 'reported', page: p?.cash_flow?.['Interest paid'] },
+      { label: 'Capex', value: capex, origin: 'reported', page: p?.cash_flow?.['Capex'] },
     ]
     const fcf = steps.reduce((acc, s) => acc + s.value, 0)
-    return [...steps, { label: 'Free cash flow', value: fcf, total: true }]
+    const totalStep: BridgeStep = {
+      label: 'Free cash flow',
+      value: fcf,
+      origin: 'derived',
+      total: true,
+    }
+    return [...steps, totalStep]
   }, [detail, operatingLoss, cf])
 
-  const bs: Record<string, number> = {}
+  const bs: Record<string, number | null> = {}
   detail?.balance_sheet.forEach((b) => (bs[b.line_item] = toNumber(b.value_eur)))
 
   const netCurrentAssets = bs['Net Current Assets'] ?? null
-  const contingentConsideration = Math.abs(bs['Contingent consideration'] ?? 0)
+  const contingentValue = bs['Contingent consideration']
+  const contingentConsideration = contingentValue == null ? null : Math.abs(contingentValue)
   const netCurrentAssetsEx =
-    netCurrentAssets !== null ? netCurrentAssets + contingentConsideration : null
+    netCurrentAssets !== null && contingentConsideration !== null
+      ? netCurrentAssets + contingentConsideration
+      : null
 
   const costOfSales = toNumber(detail?.pnl.find((p) => p.line_item === 'Cost of sales')?.value_eur)
-  const costRatio = revenue !== 0 ? (costOfSales / revenue) * 100 : null
+  const costRatio =
+    revenue !== null && revenue !== 0 && costOfSales !== null
+      ? (costOfSales / revenue) * 100
+      : null
 
-  // Compare like-for-like: same point one year earlier AND the same period
-  // length, so a half-year is never measured against a full year (FY2025 and
-  // HY2025 share the same start date).
-  const prior = current
-    ? summary.find(
-        (s) =>
-          s.period.start_date === shiftYear(current.period.start_date, -1) &&
-          monthSpan(s.period) === monthSpan(current.period),
-      )
-    : undefined
   const yoy =
-    current && prior && toNumber(prior.revenue) !== 0
+    current?.revenue_yoy_change_pct != null && current.revenue_yoy_period_label
       ? {
-          label: prior.period.label,
-          pct:
-            ((toNumber(current.revenue) - toNumber(prior.revenue)) / toNumber(prior.revenue)) * 100,
+          label: current.revenue_yoy_period_label,
+          pct: current.revenue_yoy_change_pct,
         }
       : null
 
   const seasonality = (() => {
     for (const fy of summary) {
-      if (monthSpan(fy.period) < 10) continue
+      if (fy.duration_months < 10) continue
       const h1 = summary.find(
-        (s) => s.period.start_date === fy.period.start_date && monthSpan(s.period) < 10,
+        (s) => s.period.start_date === fy.period.start_date && s.duration_months < 10,
       )
       if (!h1) continue
-      const rev = toNumber(fy.revenue)
-      const h1v = toNumber(h1.revenue)
-      if (!rev) continue
+      const rev = fy.revenue
+      const h1v = h1.revenue
+      if (rev == null || h1v == null || rev === 0) continue
       return {
         fy: fy.period.label,
         h1: h1v,
@@ -296,15 +338,20 @@ export function Dashboard({ summary, selected }: DashboardProps) {
     return null
   })()
 
-  const fullYear = summary.find((s) => monthSpan(s.period) >= 10)
-  const fyRevenue = toNumber(fullYear?.revenue)
+  const fullYear = summary.find((s) => s.duration_months >= 10)
+  const fyRevenue = fullYear?.revenue ?? null
 
   const eurOrDash = (v: number | null | undefined) =>
-    v === null || v === undefined || Number.isNaN(v) ? '—' : formatCompactEur(v)
+    v === null || v === undefined || Number.isNaN(v) ? 'n/d' : formatCompactEur(v)
   const multOrDash = (v: number | null | undefined) =>
-    v === null || v === undefined || Number.isNaN(v) ? '—' : `${v.toFixed(2)}x`
+    v === null || v === undefined || Number.isNaN(v) ? 'n/d' : `${v.toFixed(2)}x`
+  const cashAtStart = cf['Cash at start']
+  const cashAtEnd = cf['Cash at end']
   const netCashMovement =
-    cf['Cash at end'] != null ? toNumber(cf['Cash at end']) - toNumber(cf['Cash at start']) : null
+    cashAtStart != null && cashAtEnd != null ? cashAtEnd - cashAtStart : null
+  const interestCover = metricValue('interest_cover')
+  const showCoverageNote =
+    (interestCover !== null && interestCover < 0) || metricValue('dscr') === null
 
   return (
     <div className="dashboard">
@@ -335,10 +382,12 @@ export function Dashboard({ summary, selected }: DashboardProps) {
             value={formatCompactEur(revenue)}
             sublabel={
               yoy
-                ? `YoY vs ${yoy.label} · ${monthSpan(current!.period) + 1}-month`
+                ? `YoY vs ${yoy.label} · ${current?.duration_months}-month`
                 : current?.period.label
             }
             trend={yoy ? yoy.pct : null}
+            origin={current?.revenue_origin}
+            formula="Reported in the income statement"
             icon={Euro}
             accent="teal"
           />
@@ -346,6 +395,10 @@ export function Dashboard({ summary, selected }: DashboardProps) {
             label="Gross Margin"
             value={formatPct(current?.gross_margin)}
             sublabel={`GP ${formatCompactEur(current?.gross_profit)}`}
+            origin={current?.gross_margin_origin}
+            formula={metricFormula('gross_margin')}
+            sublabelOrigin={current?.gross_profit_origin}
+            hint={metricNote('gross_margin')}
             icon={Percent}
             accent="green"
           />
@@ -353,27 +406,47 @@ export function Dashboard({ summary, selected }: DashboardProps) {
             label="Operating Margin"
             value={formatPct(operatingMargin)}
             sublabel={`Op. loss ${formatCompactEur(operatingLoss)}`}
+            origin={current?.operating_margin_origin}
+            formula={metricFormula('operating_margin')}
+            sublabelOrigin={current?.operating_loss_origin}
+            hint={metricNote('operating_margin')}
             icon={Activity}
             accent="peach"
           />
           <KpiCard
             label="Cash"
-            value={current?.cash != null ? formatCompactEur(current.cash) : '—'}
-            sublabel="Balance sheet"
+            value={formatCompactEur(current?.cash)}
+            sublabel={current?.period.source_doc_id == null ? 'Identified source' : 'Balance sheet'}
+            origin={current?.cash_origin}
+            formula="Reported cash balance or identified source"
+            hint={
+              current?.period.source_doc_id == null
+                ? meta?.source_description ?? undefined
+                : undefined
+            }
             icon={Wallet}
             accent="teal"
           />
           <KpiCard
             label="Cash Runway"
-            value={current?.runway_months != null ? `${current.runway_months.toFixed(1)} mo` : '—'}
+            value={
+              current?.runway_months != null
+                ? `${current.runway_months.toFixed(1)} mo`
+                : 'n/d'
+            }
             sublabel="At current burn"
+            origin={current?.runway_origin}
+            formula={metricFormula('runway_months')}
+            hint={metricNote('runway_months')}
             icon={Timer}
             accent="green"
           />
           <KpiCard
             label="ROCE"
-            value={kpiMap['roce'] != null ? formatPct(kpiMap['roce']) : formatPct(operatingMargin)}
+            value={formatPct(metricValue('roce'))}
             sublabel="Return on capital"
+            origin={metricOrigin('roce')}
+            formula={metricFormula('roce')}
             icon={TrendingUp}
             accent="peach"
           />
@@ -384,7 +457,9 @@ export function Dashboard({ summary, selected }: DashboardProps) {
           <div className="panel">
             <div className="panel__head">
               <h2>Revenue, Gross Profit &amp; Operating Loss</h2>
-              <span className="panel__hint">FY = full year · HY = 6-month interim</span>
+              <span className="panel__hint">
+                Reported amounts · same-duration periods only
+              </span>
             </div>
             <ResponsiveContainer width="100%" height={300}>
               <BarChart data={compareData} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
@@ -440,7 +515,7 @@ export function Dashboard({ summary, selected }: DashboardProps) {
           <div className="panel">
             <div className="panel__head">
               <h2>Margin Trend</h2>
-              <span className="panel__hint">Gross vs operating margin</span>
+              <span className="panel__hint">Derived percentages · same-duration periods only</span>
             </div>
             <ResponsiveContainer width="100%" height={280}>
               <LineChart data={marginData} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
@@ -473,6 +548,7 @@ export function Dashboard({ summary, selected }: DashboardProps) {
                     <div key={step.label} className={`bridge__row ${isTotal ? 'is-total' : ''}`}>
                       <span className="bridge__label">
                         {step.label}
+                        <span className="data-origin">{step.origin}</span>
                         {step.page && <span className="src-tag" title="Source page">p.{step.page}</span>}
                       </span>
                       <span className={`bridge__value ${step.value < 0 ? 'is-neg' : 'is-pos'}`}>
@@ -495,24 +571,50 @@ export function Dashboard({ summary, selected }: DashboardProps) {
             title="Profitability"
             hint={current?.period.label}
             items={[
-              { label: 'Gross margin', value: formatPct(kpiMap['gross_margin']) },
+              {
+                label: 'Gross margin',
+                value: formatPct(metricValue('gross_margin')),
+                origin: metricOrigin('gross_margin'),
+                formula: metricFormula('gross_margin'),
+                note: metricNote('gross_margin'),
+              },
               {
                 label: 'Operating margin',
-                value: formatPct(kpiMap['operating_margin']),
-                tone: kpiMap['operating_margin'] < 0 ? 'neg' : undefined,
+                value: formatPct(metricValue('operating_margin')),
+                origin: metricOrigin('operating_margin'),
+                formula: metricFormula('operating_margin'),
+                note: metricNote('operating_margin'),
+                tone: negativeTone(metricValue('operating_margin')),
               },
               {
                 label: 'EBITDA margin',
-                value: formatPct(kpiMap['ebitda_margin']),
-                tone: kpiMap['ebitda_margin'] < 0 ? 'neg' : undefined,
+                value: formatPct(metricValue('ebitda_margin')),
+                origin: metricOrigin('ebitda_margin'),
+                formula: metricFormula('ebitda_margin'),
+                note: metricNote('ebitda_margin'),
+                tone: negativeTone(metricValue('ebitda_margin')),
               },
               {
                 label: 'Net margin',
-                value: formatPct(kpiMap['net_margin']),
-                tone: kpiMap['net_margin'] < 0 ? 'neg' : undefined,
+                value: formatPct(metricValue('net_margin')),
+                origin: metricOrigin('net_margin'),
+                formula: metricFormula('net_margin'),
+                note: metricNote('net_margin'),
+                tone: negativeTone(metricValue('net_margin')),
               },
-              { label: 'Cost of sales / revenue', value: formatPct(costRatio) },
-              { label: 'Admin expenses / revenue', value: formatPct(kpiMap['admin_expense_ratio']) },
+              {
+                label: 'Cost of sales / revenue',
+                value: formatPct(costRatio),
+                origin: costRatio === null ? 'n/d' : 'derived',
+                formula: 'Cost of sales / Revenue × 100',
+              },
+              {
+                label: 'Admin expenses / revenue',
+                value: formatPct(metricValue('admin_expense_ratio')),
+                origin: metricOrigin('admin_expense_ratio'),
+                formula: metricFormula('admin_expense_ratio'),
+                note: metricNote('admin_expense_ratio'),
+              },
             ]}
           />
 
@@ -522,35 +624,66 @@ export function Dashboard({ summary, selected }: DashboardProps) {
             items={[
               {
                 label: 'Free cash flow',
-                value: eurOrDash(kpiMap['fcf']),
-                tone: kpiMap['fcf'] < 0 ? 'neg' : undefined,
+                value: eurOrDash(metricValue('fcf')),
+                origin: metricOrigin('fcf'),
+                formula: metricFormula('fcf'),
+                note: metricNote('fcf'),
+                tone: negativeTone(metricValue('fcf')),
               },
-              { label: 'Monthly burn', value: eurOrDash(kpiMap['monthly_burn']) },
+              {
+                label: 'Monthly burn',
+                value: eurOrDash(metricValue('monthly_burn')),
+                origin: metricOrigin('monthly_burn'),
+                formula: metricFormula('monthly_burn'),
+                note: metricNote('monthly_burn'),
+              },
               {
                 label: 'Cash runway',
-                value: kpiMap['runway_months'] != null ? `${kpiMap['runway_months'].toFixed(1)} mo` : '—',
+                value:
+                  metricValue('runway_months') != null
+                    ? `${metricValue('runway_months')!.toFixed(1)} mo`
+                    : 'n/d',
+                origin: metricOrigin('runway_months'),
+                formula: metricFormula('runway_months'),
+                note: metricNote('runway_months'),
               },
               {
                 label: 'Net cash (cash less long-term debt)',
-                value: eurOrDash(kpiMap['net_cash']),
-                tone: kpiMap['net_cash'] < 0 ? 'neg' : undefined,
+                value: eurOrDash(metricValue('net_cash')),
+                origin: metricOrigin('net_cash'),
+                formula: metricFormula('net_cash'),
+                note: metricNote('net_cash'),
+                tone: negativeTone(metricValue('net_cash')),
               },
               {
                 label: 'Net cash movement',
                 value: eurOrDash(netCashMovement),
+                origin: netCashMovement === null ? 'n/d' : 'derived',
+                formula: 'Cash at end − Cash at start',
                 tone: netCashMovement != null && netCashMovement < 0 ? 'neg' : undefined,
               },
-              { label: 'Current ratio', value: multOrDash(kpiMap['current_ratio']) },
+              {
+                label: 'Current ratio',
+                value: multOrDash(metricValue('current_ratio')),
+                origin: metricOrigin('current_ratio'),
+                formula: metricFormula('current_ratio'),
+                note: metricNote('current_ratio'),
+              },
               {
                 label: 'Current ratio (ex-contingent)',
-                value: multOrDash(kpiMap['current_ratio_ex_contingent']),
+                value: multOrDash(metricValue('current_ratio_ex_contingent')),
+                origin: metricOrigin('current_ratio_ex_contingent'),
+                formula: metricFormula('current_ratio_ex_contingent'),
+                note: metricNote('current_ratio_ex_contingent'),
               },
               {
                 label: 'Working capital',
                 value: eurOrDash(netCurrentAssets),
+                origin: netCurrentAssets === null ? 'n/d' : 'reported',
+                formula: null,
                 tone: netCurrentAssets != null && netCurrentAssets < 0 ? 'neg' : undefined,
                 note:
-                  contingentConsideration > 0
+                  contingentConsideration != null && contingentConsideration > 0
                     ? `Net current assets including the Loamin contingent consideration. Excluding it: ${formatCompactEur(
                         netCurrentAssetsEx,
                       )}.`
@@ -563,36 +696,65 @@ export function Dashboard({ summary, selected }: DashboardProps) {
             title="Solvency &amp; returns"
             hint={current?.period.label}
             items={[
-              { label: 'Debt / equity', value: formatPct(kpiMap['debt_to_equity']) },
-              { label: 'Equity / total assets', value: formatPct(kpiMap['equity_ratio']) },
+              {
+                label: 'Debt / equity',
+                value: formatPct(metricValue('debt_to_equity')),
+                origin: metricOrigin('debt_to_equity'),
+                formula: metricFormula('debt_to_equity'),
+                note: metricNote('debt_to_equity'),
+              },
+              {
+                label: 'Equity / total assets',
+                value: formatPct(metricValue('equity_ratio')),
+                origin: metricOrigin('equity_ratio'),
+                formula: metricFormula('equity_ratio'),
+                note: metricNote('equity_ratio'),
+              },
               {
                 label: 'Intangibles / total assets',
-                value: formatPct(kpiMap['intangibles_ratio']),
+                value: formatPct(metricValue('intangibles_ratio')),
+                origin: metricOrigin('intangibles_ratio'),
+                formula: metricFormula('intangibles_ratio'),
+                note: metricNote('intangibles_ratio'),
               },
               {
                 label: 'Interest cover',
-                value: multOrDash(kpiMap['interest_cover']),
-                tone: kpiMap['interest_cover'] < 0 ? 'neg' : undefined,
+                value: multOrDash(metricValue('interest_cover')),
+                origin: metricOrigin('interest_cover'),
+                formula: metricFormula('interest_cover'),
+                note: metricNote('interest_cover'),
+                tone: negativeTone(metricValue('interest_cover')),
               },
               {
                 label: 'DSCR',
-                value: multOrDash(kpiMap['dscr']),
-                note: 'Not meaningful while operating cash flow is negative.',
+                value: multOrDash(metricValue('dscr')),
+                origin: metricOrigin('dscr'),
+                formula: metricFormula('dscr'),
+                note: metricNote('dscr'),
               },
               {
                 label: 'ROCE',
-                value: formatPct(kpiMap['roce']),
-                tone: kpiMap['roce'] < 0 ? 'neg' : undefined,
+                value: formatPct(metricValue('roce')),
+                origin: metricOrigin('roce'),
+                formula: metricFormula('roce'),
+                note: metricNote('roce'),
+                tone: negativeTone(metricValue('roce')),
               },
               {
                 label: 'ROCE (ex-contingent)',
-                value: formatPct(kpiMap['roce_ex_contingent']),
-                tone: kpiMap['roce_ex_contingent'] < 0 ? 'neg' : undefined,
+                value: formatPct(metricValue('roce_ex_contingent')),
+                origin: metricOrigin('roce_ex_contingent'),
+                formula: metricFormula('roce_ex_contingent'),
+                note: metricNote('roce_ex_contingent'),
+                tone: negativeTone(metricValue('roce_ex_contingent')),
               },
               {
                 label: 'ROE',
-                value: formatPct(kpiMap['roe']),
-                tone: kpiMap['roe'] < 0 ? 'neg' : undefined,
+                value: formatPct(metricValue('roe')),
+                origin: metricOrigin('roe'),
+                formula: metricFormula('roe'),
+                note: metricNote('roe'),
+                tone: negativeTone(metricValue('roe')),
               },
             ]}
           />
@@ -606,30 +768,67 @@ export function Dashboard({ summary, selected }: DashboardProps) {
             items={[
               {
                 label: 'Revenue growth YoY',
-                value: yoy ? formatPct(yoy.pct) : '—',
+                value: yoy ? formatPct(yoy.pct) : 'n/d',
+                origin: yoy ? 'derived' : 'n/d',
+                formula: 'Same-duration revenue vs the period starting 12 months earlier',
                 tone: yoy ? (yoy.pct >= 0 ? 'pos' : 'neg') : undefined,
                 note: yoy
                   ? `${current?.period.label} vs ${yoy.label} — same-length period one year earlier.`
                   : 'No prior-year comparable of the same length is loaded for this period.',
               },
-              { label: 'Senus 2030 target CAGR', value: '50.0%' },
+              {
+                label: 'Senus 2030 target CAGR',
+                value: '50.0%',
+                origin: 'reported',
+              },
               {
                 label: 'Required FY2026 revenue',
-                value: fyRevenue ? formatCompactEur(fyRevenue * 1.5) : '—',
-                note: fyRevenue
+                value: fyRevenue !== null ? formatCompactEur(fyRevenue * 1.5) : 'n/d',
+                origin: fyRevenue !== null ? 'derived' : 'n/d',
+                formula: 'FY2025 revenue × 1.5',
+                note: fyRevenue !== null
                   ? `From FY2025 revenue of ${formatCompactEur(fyRevenue)} to stay on a 50% CAGR track.`
-                  : undefined,
+                  : 'FY2025 revenue is not available.',
               },
               {
                 label: 'FY2025 seasonality (H1 / H2)',
                 value: seasonality
                   ? `${seasonality.h1pct.toFixed(0)}% / ${seasonality.h2pct.toFixed(0)}%`
-                  : '—',
+                  : 'n/d',
+                origin: seasonality ? 'derived' : 'n/d',
+                formula: 'H1 and residual H2 revenue as a share of full-year revenue',
                 note: seasonality
                   ? `H1 ${formatCompactEur(seasonality.h1)} vs implied H2 ${formatCompactEur(
                       seasonality.h2,
                     )}.`
                   : undefined,
+              },
+              {
+                label: 'Revenue growth month over month',
+                value: formatPct(metricValue('revenue_mom')),
+                origin: metricOrigin('revenue_mom'),
+                note: metricNote('revenue_mom'),
+              },
+              {
+                label: 'Revenue by sales channel',
+                value: eurOrDash(metricValue('sales_channels')),
+                origin: metricOrigin('sales_channels'),
+                note: metricNote('sales_channels'),
+              },
+              {
+                label: 'Bookings',
+                value: eurOrDash(metricValue('bookings')),
+                origin: metricOrigin('bookings'),
+                note: metricNote('bookings'),
+              },
+              {
+                label: 'Customer accounts',
+                value:
+                  metricValue('customer_accounts') == null
+                    ? 'n/d'
+                    : `${metricValue('customer_accounts')}`,
+                origin: metricOrigin('customer_accounts'),
+                note: metricNote('customer_accounts'),
               },
             ]}
           />
@@ -639,19 +838,17 @@ export function Dashboard({ summary, selected }: DashboardProps) {
               <h2>How to read these ratios</h2>
             </div>
             <ul className="notes">
-              {(kpiMap['interest_cover'] < 0 || kpiMap['dscr'] == null) && (
+              {showCoverageNote ? (
                 <li>
-                  <strong>Coverage metrics are not meaningful.</strong> DSCR and interest cover are
-                  negative or undefined because operating profit and operating cash flow are negative
-                  — there is no EBITDA to service debt.
+                  <strong>DSCR is n/d.</strong> {metricNote('dscr') ?? 'Required inputs are not reported.'}
                 </li>
-              )}
-              {contingentConsideration > 0 && (
+              ) : null}
+              {contingentConsideration != null && contingentConsideration > 0 && (
                 <li>
                   <strong>Contingent consideration shapes liquidity.</strong> Including the{' '}
                   {formatCompactEur(contingentConsideration)} earn-out the current ratio is{' '}
-                  {multOrDash(kpiMap['current_ratio'])}; excluding it it is{' '}
-                  {multOrDash(kpiMap['current_ratio_ex_contingent'])}.
+                  {multOrDash(metricValue('current_ratio'))}; excluding it it is{' '}
+                  {multOrDash(metricValue('current_ratio_ex_contingent'))}.
                 </li>
               )}
               <li>
@@ -670,8 +867,10 @@ export function Dashboard({ summary, selected }: DashboardProps) {
           </div>
           <div className="provenance__grid">
             <div>
-              <span className="provenance__label">Source document</span>
-              <span className="provenance__value">{meta?.document_title ?? '—'}</span>
+              <span className="provenance__label">Source</span>
+              <span className="provenance__value">
+                {meta?.source_description ?? meta?.document_title ?? 'n/d'}
+              </span>
             </div>
             <div>
               <span className="provenance__label">Reporting period</span>
@@ -694,8 +893,9 @@ export function Dashboard({ summary, selected }: DashboardProps) {
             </div>
           </div>
           <p className="provenance__note">
-            Every figure in the P&amp;L, balance sheet and cash flow is extracted from the source
-            document; the tags on the cash-flow bridge show the page each line comes from.
+            {current?.period.source_doc_id == null
+              ? 'This period has no uploaded source document; its reported values are attributed above.'
+              : 'Statement figures are reported from the source document; derived KPIs show their formula on hover.'}
             {!meta?.audited && ' These interim accounts are unaudited.'}
           </p>
         </section>

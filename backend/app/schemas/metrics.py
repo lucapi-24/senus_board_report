@@ -10,4 +10,5 @@ class MetricSpec(BaseModel):
     category: str
     direction: str
     formula: str
+    kind: str = "derived"
     note: Optional[str] = None

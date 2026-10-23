@@ -230,109 +230,156 @@ TEXT (page markers [p.N] indicate the source page):
         return {"error": str(e)}
 
 
-def compute_kpis(pnl: Dict, bs: Dict, cf: Dict) -> Dict[str, float]:
-    """Compute derived KPIs using the reference-document methodology.
+def compute_kpis(
+    pnl: Dict,
+    bs: Dict,
+    cf: Dict,
+    period_months: int = 6,
+) -> Dict[str, float | None]:
+    """Return reported, derived, and unavailable metrics without zero-filling."""
+    from app.services.metrics import CATALOG
 
-    Only uses values that were extracted from the document. Derived subtotals
-    (Total Fixed Assets, Total Current Assets, EBITDA) are computed here from
-    the extracted components, not stored during extraction.
-    """
-    kpis: Dict[str, float] = {}
+    kpis: Dict[str, float | None] = {
+        str(spec["key"]): None for spec in CATALOG
+    }
 
-    def f(source: Dict, key: str) -> float:
-        return float(source.get(key, 0) or 0)
+    def value(source: Dict, key: str) -> float | None:
+        raw = source.get(key)
+        return float(raw) if raw is not None else None
 
-    revenue = f(pnl, "Revenue")
-    gross_profit = f(pnl, "Gross Profit")
-    admin_exp = f(pnl, "Administrative expenses")
-    net_loss = f(pnl, "Loss for the period")
-    operating_loss = f(pnl, "Group operating loss")
-    loss_before_tax = f(pnl, "Loss before taxation")
-    interest = f(pnl, "Interest payable")
+    def first_value(source: Dict, *keys: str) -> float | None:
+        for key in keys:
+            raw = value(source, key)
+            if raw is not None:
+                return raw
+        return None
 
-    # Force losses to be negative for calculations
-    if operating_loss > 0:
+    def subtotal(source: Dict, total_key: str, *component_keys: str) -> float | None:
+        direct = value(source, total_key)
+        if direct is not None:
+            return direct
+        components = [value(source, key) for key in component_keys]
+        if any(component is None for component in components):
+            return None
+        return sum(component for component in components if component is not None)
+
+    revenue = first_value(pnl, "Revenue", "Turnover")
+    gross_profit = value(pnl, "Gross Profit")
+    admin_expenses = value(pnl, "Administrative expenses")
+    net_loss = value(pnl, "Loss for the period")
+    operating_loss = first_value(pnl, "Group operating loss", "Operating loss")
+    interest = first_value(pnl, "Interest payable", "Interest paid")
+
+    if revenue is not None:
+        kpis["revenue"] = revenue
+
+    cash = first_value(bs, "Cash and cash equivalents", "Cash and bank balances")
+    if cash is not None:
+        kpis["cash"] = cash
+
+    if operating_loss is not None and operating_loss > 0:
         operating_loss = -operating_loss
-    if net_loss > 0:
+    if net_loss is not None and net_loss > 0:
         net_loss = -net_loss
-    if loss_before_tax > 0:
-        loss_before_tax = -loss_before_tax
 
-    cash = f(bs, "Cash and cash equivalents")
-    creditors_short = f(bs, "Creditors < 1yr")
-    creditors_long = f(bs, "Creditors > 1yr")
-    contingent = f(bs, "Contingent consideration")
-    equity = f(bs, "Equity") or f(bs, "Net Assets")
-
-    # Compute derived subtotals from components if not present in document
-    total_fixed_assets = f(bs, "Total Fixed Assets")
-    if total_fixed_assets == 0:
-        total_fixed_assets = f(bs, "Goodwill") + f(bs, "Development Costs") + f(bs, "Tangible Assets")
-    total_current_assets = f(bs, "Total Current Assets")
-    if total_current_assets == 0:
-        total_current_assets = f(bs, "Debtors") + f(bs, "Cash and cash equivalents")
-
-    depreciation = f(cf, "Depreciation")
-    # Compute EBITDA if not present in document
-    ebitda = f(cf, "EBITDA")
-    if ebitda == 0:
+    total_fixed_assets = subtotal(
+        bs, "Total Fixed Assets", "Goodwill", "Development Costs", "Tangible Assets"
+    )
+    total_current_assets = subtotal(
+        bs, "Total Current Assets", "Debtors", "Cash and cash equivalents"
+    )
+    total_assets = (
+        total_fixed_assets + total_current_assets
+        if total_fixed_assets is not None and total_current_assets is not None
+        else None
+    )
+    equity = first_value(bs, "Equity", "Net Assets")
+    short_creditors = value(bs, "Creditors < 1yr")
+    long_creditors = value(bs, "Creditors > 1yr")
+    contingent = value(bs, "Contingent consideration")
+    depreciation = value(cf, "Depreciation")
+    ebitda = value(cf, "EBITDA")
+    if ebitda is None and operating_loss is not None and depreciation is not None:
         ebitda = operating_loss + depreciation
-    ebit = operating_loss  # operating loss used as EBIT proxy
-    net_cash_ops = f(cf, "Net cash from operations")
-    capex = f(cf, "Capex")
-    loan_repayments = f(cf, "Loan repayments")
+    if ebitda is not None:
+        kpis["ebitda"] = ebitda
 
-    # --- Profitability ---
-    if revenue:
-        kpis["gross_margin"] = gross_profit / revenue * 100
-        kpis["operating_margin"] = operating_loss / revenue * 100
-        kpis["ebitda_margin"] = ebitda / revenue * 100
-        kpis["net_margin"] = net_loss / revenue * 100
-        kpis["admin_expense_ratio"] = admin_exp / revenue * 100
+    if revenue not in (None, 0):
+        if gross_profit is not None:
+            kpis["gross_margin"] = gross_profit / revenue * 100
+        if operating_loss is not None:
+            kpis["operating_margin"] = operating_loss / revenue * 100
+        if ebitda is not None:
+            kpis["ebitda_margin"] = ebitda / revenue * 100
+        if net_loss is not None:
+            kpis["net_margin"] = net_loss / revenue * 100
+        if admin_expenses is not None:
+            kpis["admin_expense_ratio"] = admin_expenses / revenue * 100
 
-    # --- Cash & burn ---
-    fcf = net_cash_ops + capex                            # -418,791
-    monthly_burn = abs(fcf) / 6
-    if monthly_burn > 0:
+    net_cash_ops = value(cf, "Net cash from operations")
+    capex = value(cf, "Capex")
+    fcf = net_cash_ops + capex if net_cash_ops is not None and capex is not None else None
+    if fcf is not None:
         kpis["fcf"] = fcf
-        kpis["monthly_burn"] = monthly_burn
-        kpis["runway_months"] = cash / monthly_burn
-    kpis["net_cash"] = cash - abs(creditors_long)
+        if fcf < 0 and period_months > 0:
+            monthly_burn = abs(fcf) / period_months
+            kpis["monthly_burn"] = monthly_burn
+            if cash is not None and monthly_burn > 0:
+                kpis["runway_months"] = cash / monthly_burn
 
-    # --- Liquidity ---
-    current_liabilities = abs(creditors_short) + abs(contingent)
-    if total_current_assets:
-        if current_liabilities:
-            kpis["current_ratio"] = total_current_assets / current_liabilities
-        if abs(creditors_short):
-            kpis["current_ratio_ex_contingent"] = total_current_assets / abs(creditors_short)
+    if cash is not None and long_creditors is not None:
+        kpis["net_cash"] = cash - abs(long_creditors)
 
-    # --- Solvency & leverage ---
-    total_assets = total_fixed_assets + total_current_assets
-    if total_assets:
+    if total_current_assets is not None and short_creditors is not None:
+        current_liabilities = abs(short_creditors)
+        if contingent is not None:
+            liabilities_including_contingent = current_liabilities + abs(contingent)
+            if liabilities_including_contingent > 0:
+                kpis["current_ratio"] = total_current_assets / liabilities_including_contingent
+        if current_liabilities > 0:
+            kpis["current_ratio_ex_contingent"] = total_current_assets / current_liabilities
+
+    if total_assets is not None:
         kpis["total_assets"] = total_assets
-        kpis["equity_ratio"] = equity / total_assets * 100
-        intangibles = f(bs, "Goodwill") + f(bs, "Development Costs")
-        kpis["intangibles_ratio"] = intangibles / total_assets * 100
-    if equity and abs(creditors_long):
-        kpis["debt_to_equity"] = abs(creditors_long) / equity * 100
-    if interest:
-        kpis["interest_cover"] = ebit / interest
+        if equity is not None and total_assets != 0:
+            kpis["equity_ratio"] = equity / total_assets * 100
+        goodwill = value(bs, "Goodwill")
+        development_costs = value(bs, "Development Costs")
+        if (
+            goodwill is not None
+            and development_costs is not None
+            and total_assets != 0
+        ):
+            kpis["intangibles_ratio"] = (
+                (goodwill + development_costs) / total_assets * 100
+            )
 
-    # DSCR is only meaningful with positive cash available for debt service
-    debt_service = interest + abs(loan_repayments)
-    if net_cash_ops > 0 and debt_service:
-        kpis["dscr"] = net_cash_ops / debt_service
+    if equity not in (None, 0) and long_creditors is not None:
+        kpis["debt_to_equity"] = abs(long_creditors) / equity * 100
+    if operating_loss is not None and interest not in (None, 0):
+        kpis["interest_cover"] = operating_loss / interest
 
-    # --- Returns ---
-    capital_employed = total_assets - current_liabilities
-    if capital_employed:
-        kpis["roce"] = ebit / capital_employed * 100
-        kpis["roce_annualised"] = kpis["roce"] * 2
-    capital_employed_ex = total_assets - abs(creditors_short)
-    if capital_employed_ex and abs(contingent):
-        kpis["roce_ex_contingent"] = ebit / capital_employed_ex * 100
-    if equity:
+    loan_repayments = value(cf, "Loan repayments")
+    if net_cash_ops is not None and net_cash_ops > 0:
+        if interest is not None and loan_repayments is not None:
+            debt_service = abs(interest) + abs(loan_repayments)
+            if debt_service > 0:
+                kpis["dscr"] = net_cash_ops / debt_service
+
+    if total_assets is not None and short_creditors is not None and contingent is not None:
+        capital_employed = total_assets - abs(short_creditors) - abs(contingent)
+        if capital_employed != 0 and operating_loss is not None:
+            roce = operating_loss / capital_employed * 100
+            kpis["roce"] = roce
+            if period_months > 0:
+                kpis["roce_annualised"] = roce * 12 / period_months
+    if total_assets is not None and short_creditors is not None:
+        capital_employed_ex_contingent = total_assets - abs(short_creditors)
+        if capital_employed_ex_contingent != 0 and operating_loss is not None:
+            kpis["roce_ex_contingent"] = (
+                operating_loss / capital_employed_ex_contingent * 100
+            )
+    if equity not in (None, 0) and net_loss is not None:
         kpis["roe"] = net_loss / equity * 100
 
     return kpis
@@ -368,7 +415,14 @@ async def process_pdf(
     )
 
     # 4. Compute KPIs
-    kpis = compute_kpis(tables["pnl"], tables["balance_sheet"], tables["cash_flow"])
+    from app.services.period_detector import period_duration_months
+
+    kpis = compute_kpis(
+        tables["pnl"],
+        tables["balance_sheet"],
+        tables["cash_flow"],
+        period_duration_months(start_date, end_date),
+    )
 
     from app.services.validation import validate_period
 
@@ -393,7 +447,7 @@ async def process_pdf(
         "metadata": {
             "document_title": Path(pdf_path).stem,
             "currency": "EUR",
-            "period_months": _months_between(start_date, end_date),
+            "period_months": period_duration_months(start_date, end_date),
             "audited": False,
         },
         "provenance": tables["provenance"],

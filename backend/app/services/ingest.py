@@ -32,7 +32,8 @@ from app.models.financial import (
 from app.services import lifecycle
 from app.services.deterministic import compute_kpis, parse_tables
 from app.services.llm_extract import STATEMENTS, extract_structured
-from app.services.period_detector import get_column_for_period
+from app.services.metrics import CATALOG_BY_KEY, kpi_metadata
+from app.services.period_detector import get_column_for_period, period_duration_months
 from app.services.reconciliation import reconcile, review_status_for
 from app.services.validation import validate_period
 
@@ -97,18 +98,45 @@ def _provenance(result: Dict[str, Any]) -> Dict[str, Dict[str, int]]:
 def _months_between(start, end) -> int:
     if not start or not end:
         return 0
-    return max(1, round((end - start).days / 30.44))
+    return period_duration_months(start, end)
 
 
 def _metadata(doc: Document, chosen: Dict[str, Any], result: Dict[str, Any]) -> Dict[str, Any]:
     return {
         "document_title": doc.filename,
         "currency": "EUR",
-        "period_months": _months_between(doc.period_start, doc.period_end),
+        "period_months": (
+            period_duration_months(doc.period_start, doc.period_end)
+            if doc.period_start and doc.period_end
+            else None
+        ),
         "audited": False,
         "method": "hybrid (regex + llm, reconciled)",
         "review": result["summary"],
     }
+
+
+def _kpi_rows(
+    period_id: int,
+    values: Dict[str, float | None],
+    cash_flow: Dict[str, float],
+    source_notes: Dict[str, str] | None = None,
+) -> List[KPI]:
+    source_notes = source_notes or {}
+    rows = []
+    for metric, value in values.items():
+        metadata = kpi_metadata(metric, value, cash_flow, source_notes.get(metric))
+        rows.append(
+            KPI(
+                period_id=period_id,
+                metric=metric,
+                value=Decimal(str(round(float(value), 6))) if value is not None else None,
+                formula=metadata["formula"],
+                kind=metadata["kind"],
+                note=metadata["note"],
+            )
+        )
+    return rows
 
 
 async def _persist(
@@ -131,7 +159,12 @@ async def _persist(
     await db.flush()
 
     chosen = _chosen(result)
-    kpis = compute_kpis(chosen["pnl"], chosen["balance_sheet"], chosen["cash_flow"])
+    kpis = compute_kpis(
+        chosen["pnl"],
+        chosen["balance_sheet"],
+        chosen["cash_flow"],
+        period_duration_months(use_start, use_end),
+    )
     issues = [
         issue.as_dict()
         for issue in validate_period(chosen["pnl"], chosen["balance_sheet"], chosen["cash_flow"])
@@ -162,21 +195,14 @@ async def _persist(
                     line_item=item.line_item,
                     value_eur=Decimal(str(round(item.value, 2))),
                     page=item.page,
+                    origin="derived" if item.line_item == "EBITDA" else "reported",
                     review_status=review_status_for(item.status),
                     confidence=item.confidence,
                     original_value=original,
                 )
             )
 
-    for metric, value in kpis.items():
-        db.add(
-            KPI(
-                period_id=period.id,
-                metric=metric,
-                value=Decimal(str(round(float(value), 6))),
-                kind="derived",
-            )
-        )
+    db.add_all(_kpi_rows(period.id, kpis, chosen["cash_flow"]))
     for issue in issues:
         db.add(
             Validation(
@@ -196,6 +222,10 @@ async def _persist(
 
 async def recompute_derived(db: AsyncSession, period_id: int) -> None:
     """Recompute KPIs and validations after a human confirms/corrects an item."""
+    period = await db.get(Period, period_id)
+    if period is None:
+        raise ValueError(f"Unknown period: {period_id}")
+
     raw: Dict[str, Dict[str, float]] = {}
     for statement, model in ITEM_MODEL.items():
         rows = (
@@ -203,7 +233,27 @@ async def recompute_derived(db: AsyncSession, period_id: int) -> None:
         ).scalars().all()
         raw[statement] = {row.line_item: float(row.value_eur) for row in rows}
 
-    kpis = compute_kpis(raw["pnl"], raw["balance_sheet"], raw["cash_flow"])
+    kpis = compute_kpis(
+        raw["pnl"],
+        raw["balance_sheet"],
+        raw["cash_flow"],
+        period_duration_months(period.start_date, period.end_date),
+    )
+    existing_kpis = (
+        await db.execute(select(KPI).where(KPI.period_id == period_id))
+    ).scalars().all()
+    source_notes: Dict[str, str] = {}
+    for row in existing_kpis:
+        spec = CATALOG_BY_KEY.get(row.metric)
+        if (
+            row.value is not None
+            and spec is not None
+            and spec.get("kind") == "reported"
+            and kpis.get(row.metric) is None
+        ):
+            kpis[row.metric] = float(row.value)
+            if row.note:
+                source_notes[row.metric] = row.note
     issues = [
         issue.as_dict()
         for issue in validate_period(raw["pnl"], raw["balance_sheet"], raw["cash_flow"])
@@ -211,15 +261,7 @@ async def recompute_derived(db: AsyncSession, period_id: int) -> None:
 
     await db.execute(delete(KPI).where(KPI.period_id == period_id))
     await db.execute(delete(Validation).where(Validation.period_id == period_id))
-    for metric, value in kpis.items():
-        db.add(
-            KPI(
-                period_id=period_id,
-                metric=metric,
-                value=Decimal(str(round(float(value), 6))),
-                kind="derived",
-            )
-        )
+    db.add_all(_kpi_rows(period_id, kpis, raw["cash_flow"], source_notes))
     for issue in issues:
         db.add(
             Validation(

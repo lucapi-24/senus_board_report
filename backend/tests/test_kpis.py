@@ -86,5 +86,29 @@ def test_kpi_value(kpis, metric, expected):
     assert kpis[metric] == pytest.approx(expected, abs=1e-3)
 
 
-def test_dscr_is_omitted_when_cfads_negative(kpis):
-    assert "dscr" not in kpis
+def test_dscr_is_not_available_when_operating_cash_flow_is_negative(kpis):
+    assert kpis["dscr"] is None
+
+
+def test_absent_inputs_remain_unavailable_instead_of_becoming_zero():
+    kpis = compute_kpis({}, {}, {})
+
+    assert kpis["gross_margin"] is None
+    assert kpis["ebitda"] is None
+    assert kpis["runway_months"] is None
+    assert kpis["dscr"] is None
+    assert kpis["revenue_mom"] is None
+
+
+def test_fy2025_partial_data_does_not_create_margins_ebitda_or_runway():
+    kpis = compute_kpis(
+        {"Revenue": Decimal("836991")},
+        {},
+        {},
+        period_months=12,
+    )
+
+    assert kpis["revenue"] == 836991
+    assert kpis["gross_margin"] is None
+    assert kpis["ebitda"] is None
+    assert kpis["runway_months"] is None

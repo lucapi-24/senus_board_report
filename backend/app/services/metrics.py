@@ -9,11 +9,79 @@ and the documentation can agree on labels, units and formulas.
 """
 
 from dataclasses import dataclass
+from datetime import date
 from typing import Dict, Iterable, List, Optional
 
 # unit: '%' | 'EUR' | 'x' | 'months'   direction: 'up' | 'down' | 'neutral'
 CATALOG: List[Dict[str, object]] = [
+    # --- Reported data ---
+    {
+        "key": "revenue",
+        "label": "Revenue",
+        "unit": "EUR",
+        "category": "Reported data",
+        "direction": "neutral",
+        "formula": "As reported in the income statement",
+        "kind": "reported",
+    },
+    {
+        "key": "cash",
+        "label": "Cash",
+        "unit": "EUR",
+        "category": "Reported data",
+        "direction": "neutral",
+        "formula": "As reported in the balance sheet or identified source",
+        "kind": "reported",
+    },
+    {
+        "key": "customer_accounts",
+        "label": "Customer accounts",
+        "unit": "count",
+        "category": "Reported data",
+        "direction": "neutral",
+        "formula": "As reported in an identified source",
+        "kind": "reported",
+    },
+    # --- Data not provided by the current documents ---
+    {
+        "key": "revenue_mom",
+        "label": "Revenue growth month over month",
+        "unit": "%",
+        "category": "Unavailable data",
+        "direction": "neutral",
+        "formula": "",
+        "kind": "na",
+        "note": "Monthly revenue data is not available.",
+    },
+    {
+        "key": "sales_channels",
+        "label": "Revenue by sales channel",
+        "unit": "EUR",
+        "category": "Unavailable data",
+        "direction": "neutral",
+        "formula": "",
+        "kind": "na",
+        "note": "Revenue by sales channel is not available.",
+    },
+    {
+        "key": "bookings",
+        "label": "Bookings",
+        "unit": "EUR",
+        "category": "Unavailable data",
+        "direction": "neutral",
+        "formula": "",
+        "kind": "na",
+        "note": "Bookings data is not available.",
+    },
     # --- Profitability ---
+    {
+        "key": "ebitda",
+        "label": "EBITDA",
+        "unit": "EUR",
+        "category": "Profitability",
+        "direction": "neutral",
+        "formula": "Group operating loss + Depreciation",
+    },
     {
         "key": "gross_margin",
         "label": "Gross margin",
@@ -69,8 +137,8 @@ CATALOG: List[Dict[str, object]] = [
         "unit": "EUR",
         "category": "Cash & burn",
         "direction": "down",
-        "formula": "abs(Free cash flow) / 6",
-        "note": "Assumes a six-month interim period (divisor is hard-coded).",
+        "formula": "abs(Free cash flow) / period duration in months",
+        "note": "Unavailable if free cash flow is not reported or is not negative.",
     },
     {
         "key": "runway_months",
@@ -79,7 +147,7 @@ CATALOG: List[Dict[str, object]] = [
         "category": "Cash & burn",
         "direction": "up",
         "formula": "Cash / Monthly burn",
-        "note": "Only meaningful while the business is burning cash.",
+        "note": "Requires a reported cash balance and negative free cash flow.",
     },
     {
         "key": "net_cash",
@@ -173,7 +241,7 @@ CATALOG: List[Dict[str, object]] = [
         "unit": "%",
         "category": "Returns",
         "direction": "up",
-        "formula": "ROCE × 2 (interim period annualised)",
+        "formula": "ROCE × 12 / period duration in months",
     },
     {
         "key": "roce_ex_contingent",
@@ -194,6 +262,68 @@ CATALOG: List[Dict[str, object]] = [
 ]
 
 CATALOG_BY_KEY: Dict[str, Dict[str, object]] = {m["key"]: m for m in CATALOG}
+
+
+def kpi_metadata(
+    metric: str,
+    value: Optional[float],
+    cash_flow: Optional[Dict[str, float]] = None,
+    source_note: Optional[str] = None,
+) -> Dict[str, Optional[str]]:
+    """Return consistent origin, formula, and unavailable-data details."""
+    spec = CATALOG_BY_KEY[metric]
+    expected_kind = str(spec.get("kind", "derived"))
+    kind = expected_kind if value is not None else "na"
+    note = source_note
+    if value is None:
+        note = note or (str(spec["note"]) if spec.get("note") else None)
+        cash_flow_value = None
+        capex_value = None
+        if cash_flow is not None:
+            raw_cash_flow_value = cash_flow.get("Net cash from operations")
+            if raw_cash_flow_value is not None:
+                cash_flow_value = float(raw_cash_flow_value)
+            raw_capex = cash_flow.get("Capex")
+            if raw_capex is not None:
+                capex_value = float(raw_capex)
+        if (
+            metric == "dscr"
+            and cash_flow_value is not None
+            and cash_flow_value < 0
+        ):
+            note = "n/d: operating cash flow is negative."
+        elif metric in ("monthly_burn", "runway_months"):
+            if cash_flow_value is None or capex_value is None:
+                note = "n/d: required cash flow inputs are not reported."
+            elif cash_flow_value + capex_value >= 0:
+                note = "n/d: free cash flow is not negative, so cash burn or runway is not applicable."
+        elif note is None:
+            note = (
+                "Not reported for this period."
+                if expected_kind == "reported"
+                else "Required inputs are not reported or the formula is undefined."
+            )
+    return {
+        "kind": kind,
+        "formula": str(spec["formula"]) if spec.get("formula") else None,
+        "note": note,
+    }
+
+
+def require_same_period_duration(
+    start_a: date, end_a: date, start_b: date, end_b: date
+) -> int:
+    """Reject comparisons between flows covering different numbers of months."""
+    from app.services.period_detector import period_duration_months
+
+    duration_a = period_duration_months(start_a, end_a)
+    duration_b = period_duration_months(start_b, end_b)
+    if duration_a != duration_b:
+        raise ValueError(
+            f"Cannot compare periods of different durations "
+            f"({duration_a} months vs {duration_b} months)."
+        )
+    return duration_a
 
 
 def get_catalog() -> List[Dict[str, object]]:

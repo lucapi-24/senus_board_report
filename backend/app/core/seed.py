@@ -25,6 +25,9 @@ from app.models.financial import (
     User,
     Validation,
 )
+from app.services.deterministic import compute_kpis
+from app.services.metrics import kpi_metadata
+from app.services.period_detector import period_duration_months
 from app.services.validation import validate_period
 
 EXTRACTED_DIR = Path(__file__).resolve().parents[2] / "scripts" / "extracted"
@@ -74,14 +77,17 @@ async def load_extracted(data: Dict[str, Any]) -> str:
         await session.execute(delete(Document).where(Document.period_label == label))
         await session.flush()
 
-        doc = Document(
-            filename=data.get("source_file", "unknown.pdf"),
-            period_label=label,
-            doc_type="interim_results",
-            status="published",
-        )
-        session.add(doc)
-        await session.flush()
+        source_file = data.get("source_file")
+        doc = None
+        if source_file:
+            doc = Document(
+                filename=source_file,
+                period_label=label,
+                doc_type="interim_results",
+                status="published",
+            )
+            session.add(doc)
+            await session.flush()
 
         metadata = data.get("metadata")
         provenance = data.get("provenance")
@@ -89,7 +95,7 @@ async def load_extracted(data: Dict[str, Any]) -> str:
             label=label,
             start_date=date.fromisoformat(data["start_date"]),
             end_date=date.fromisoformat(data["end_date"]),
-            source_doc_id=doc.id,
+            source_doc_id=doc.id if doc else None,
             meta_json=json.dumps(metadata) if metadata else None,
             provenance_json=json.dumps(provenance) if provenance else None,
         )
@@ -98,22 +104,59 @@ async def load_extracted(data: Dict[str, Any]) -> str:
 
         for line_item, value in data.get("pnl", {}).items():
             session.add(
-                PnLItem(period_id=period.id, line_item=line_item, value_eur=Decimal(str(value)))
+                PnLItem(
+                    period_id=period.id,
+                    line_item=line_item,
+                    value_eur=Decimal(str(value)),
+                    origin="derived" if line_item == "EBITDA" else "reported",
+                )
             )
         for line_item, value in data.get("balance_sheet", {}).items():
             session.add(
                 BalanceSheetItem(
-                    period_id=period.id, line_item=line_item, value_eur=Decimal(str(value))
+                    period_id=period.id,
+                    line_item=line_item,
+                    value_eur=Decimal(str(value)),
+                    origin="derived" if line_item == "EBITDA" else "reported",
                 )
             )
         for line_item, value in data.get("cash_flow", {}).items():
             session.add(
                 CashFlowItem(
-                    period_id=period.id, line_item=line_item, value_eur=Decimal(str(value))
+                    period_id=period.id,
+                    line_item=line_item,
+                    value_eur=Decimal(str(value)),
+                    origin="derived" if line_item == "EBITDA" else "reported",
                 )
             )
-        for metric, value in data.get("kpis", {}).items():
-            session.add(KPI(period_id=period.id, metric=metric, value=Decimal(str(value))))
+        period_months = period_duration_months(period.start_date, period.end_date)
+        kpi_values = compute_kpis(
+            data.get("pnl", {}),
+            data.get("balance_sheet", {}),
+            data.get("cash_flow", {}),
+            period_months,
+        )
+        for metric in ("cash", "customer_accounts"):
+            if metric in data.get("kpis", {}) and kpi_values[metric] is None:
+                kpi_values[metric] = float(data["kpis"][metric])
+        kpi_sources = data.get("kpi_sources", {})
+        for metric, value in kpi_values.items():
+            metadata = kpi_metadata(
+                metric,
+                value,
+                data.get("cash_flow", {}),
+                kpi_sources.get(metric),
+            )
+            session.add(
+                KPI(
+                    period_id=period.id,
+                    metric=metric,
+                    value=Decimal(str(round(value, 6))) if value is not None else None,
+                    formula=metadata["formula"],
+                    kind=metadata["kind"],
+                    note=metadata["note"],
+                )
+            )
 
         # Use validations from the extraction output when present, otherwise run
         # the rules here so committed fixtures still get checked on load.
@@ -137,7 +180,8 @@ async def load_extracted(data: Dict[str, Any]) -> str:
                 )
             )
 
-        doc.raw_json = json.dumps(data.get("narrative_insights", {}))
+        if doc:
+            doc.raw_json = json.dumps(data.get("narrative_insights", {}))
         await session.commit()
 
     return label

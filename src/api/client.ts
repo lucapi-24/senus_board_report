@@ -62,6 +62,7 @@ export interface LineItem {
   line_item: string
   value_eur: number
   page?: number | null
+  origin?: string | null
   review_status?: string | null
   confidence?: number | null
   original_value?: number | null
@@ -71,7 +72,10 @@ export type FinancialStatement = 'pnl' | 'balance_sheet' | 'cash_flow'
 
 export interface KPIValue {
   metric: string
-  value: number
+  value: number | null
+  formula?: string | null
+  kind: 'reported' | 'derived' | 'na'
+  note?: string | null
 }
 
 export interface PeriodMeta {
@@ -79,6 +83,7 @@ export interface PeriodMeta {
   currency?: string | null
   period_months?: number | null
   audited?: boolean | null
+  source_description?: string | null
 }
 
 export interface Provenance {
@@ -98,13 +103,25 @@ export interface PeriodDetail extends Period {
 
 export interface FinancialSummary {
   period: Period
+  duration_months: number
   revenue: number | null
+  revenue_origin: string
   gross_profit: number | null
+  gross_profit_origin: string
   gross_margin: number | null
+  gross_margin_origin: string
   operating_loss: number | null
+  operating_loss_origin: string
+  operating_margin: number | null
+  operating_margin_origin: string
   cash: number | null
+  cash_origin: string
   debt: number | null
+  debt_origin: string
   runway_months: number | null
+  runway_origin: string
+  revenue_yoy_change_pct: number | null
+  revenue_yoy_period_label: string | null
 }
 
 export interface AIInsight {
@@ -120,6 +137,7 @@ export interface ReconciledItem {
   status: string
   confidence: number
   page: number | null
+  origin?: string | null
   source: string
   llm_value: number | null
   regex_value: number | null
@@ -298,14 +316,15 @@ export const api = {
   publishPeriod: (label: string) => send<Period>(`/api/periods/${label}/publish`, 'POST'),
 }
 
-export function toNumber(value: string | number | null | undefined): number {
-  if (value === null || value === undefined) return 0
+export function toNumber(value: string | number | null | undefined): number | null {
+  if (value === null || value === undefined) return null
   const n = typeof value === 'number' ? value : parseFloat(value)
-  return Number.isFinite(n) ? n : 0
+  return Number.isFinite(n) ? n : null
 }
 
 export function formatEur(value: string | number | null | undefined, digits = 0): string {
   const n = toNumber(value)
+  if (n === null) return 'n/d'
   return new Intl.NumberFormat('en-IE', {
     style: 'currency',
     currency: 'EUR',
@@ -316,6 +335,7 @@ export function formatEur(value: string | number | null | undefined, digits = 0)
 
 export function formatCompactEur(value: string | number | null | undefined): string {
   const n = toNumber(value)
+  if (n === null) return 'n/d'
   const abs = Math.abs(n)
   if (abs >= 1_000_000) return `€${(n / 1_000_000).toFixed(2)}m`
   if (abs >= 1_000) return `€${(n / 1_000).toFixed(1)}k`
@@ -323,6 +343,6 @@ export function formatCompactEur(value: string | number | null | undefined): str
 }
 
 export function formatPct(value: number | null | undefined, digits = 1): string {
-  if (value === null || value === undefined) return '—'
+  if (value === null || value === undefined || !Number.isFinite(value)) return 'n/d'
   return `${value.toFixed(digits)}%`
 }

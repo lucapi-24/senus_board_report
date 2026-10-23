@@ -5,6 +5,7 @@ from sqlalchemy.orm import selectinload
 from typing import List
 from decimal import Decimal
 import json
+import calendar
 
 from app.core.database import get_db
 from app.core.security import get_current_user, require_admin
@@ -35,11 +36,54 @@ from app.schemas.financial import (
     ValidationResponse,
 )
 from app.services import lifecycle
+from app.services.deterministic import compute_kpis
 from app.services.ingest import recompute_derived
+from app.services.metrics import CATALOG_BY_KEY, kpi_metadata
+from app.services.period_detector import period_duration_months
 
 router = APIRouter(prefix="/api", tags=["financial"])
 
 ITEM_MODELS = {"pnl": PnLItem, "balance_sheet": BalanceSheetItem, "cash_flow": CashFlowItem}
+
+
+def _period_kpis(period: Period) -> dict[str, float | None]:
+    pnl = {item.line_item: float(item.value_eur) for item in period.pnl_items}
+    balance_sheet = {item.line_item: float(item.value_eur) for item in period.bs_items}
+    cash_flow = {item.line_item: float(item.value_eur) for item in period.cf_items}
+    values = compute_kpis(
+        pnl,
+        balance_sheet,
+        cash_flow,
+        period_duration_months(period.start_date, period.end_date),
+    )
+    for row in period.kpis:
+        spec = CATALOG_BY_KEY.get(row.metric)
+        if (
+            row.value is not None
+            and spec is not None
+            and spec.get("kind") == "reported"
+            and values.get(row.metric) is None
+        ):
+            values[row.metric] = float(row.value)
+    return values
+
+
+def _period_kpi_responses(period: Period) -> list[KPIResponse]:
+    cash_flow = {item.line_item: float(item.value_eur) for item in period.cf_items}
+    sources = {
+        row.metric: row.note
+        for row in period.kpis
+        if row.note and CATALOG_BY_KEY.get(row.metric, {}).get("kind") == "reported"
+    }
+    values = _period_kpis(period)
+    return [
+        KPIResponse(
+            metric=metric,
+            value=value,
+            **kpi_metadata(metric, value, cash_flow, sources.get(metric)),
+        )
+        for metric, value in values.items()
+    ]
 
 
 @router.get("/periods", response_model=List[PeriodResponse])
@@ -70,7 +114,9 @@ async def get_period_detail(
     period = result.scalar_one_or_none()
     if not period:
         raise HTTPException(status_code=404, detail="Period not found")
-    return period
+    response = PeriodDetailResponse.model_validate(period)
+    response.kpis = _period_kpi_responses(period)
+    return response
 
 
 @router.get("/summary", response_model=List[FinancialSummary])
@@ -84,6 +130,7 @@ async def get_financial_summary(
         .options(
             selectinload(Period.pnl_items),
             selectinload(Period.bs_items),
+            selectinload(Period.cf_items),
             selectinload(Period.kpis),
         )
         .order_by(Period.end_date.desc())
@@ -92,30 +139,96 @@ async def get_financial_summary(
 
     summaries = []
     for p in periods:
-        pnl_dict = {item.line_item: item.value_eur for item in p.pnl_items}
-        bs_dict = {item.line_item: item.value_eur for item in p.bs_items}
-        kpi_dict = {k.metric: float(k.value) for k in p.kpis}
+        pnl_dict = {item.line_item: float(item.value_eur) for item in p.pnl_items}
+        bs_dict = {item.line_item: float(item.value_eur) for item in p.bs_items}
+        kpi_dict = _period_kpis(p)
 
-        revenue = pnl_dict.get("Revenue") or pnl_dict.get("Turnover")
+        revenue = pnl_dict.get("Revenue")
+        if revenue is None:
+            revenue = pnl_dict.get("Turnover")
         gross_profit = pnl_dict.get("Gross Profit")
-        gross_margin = float(gross_profit / revenue * 100) if revenue and gross_profit and revenue != 0 else None
-        operating_loss = pnl_dict.get("Group operating loss") or pnl_dict.get("Operating loss")
+        gross_margin = (
+            kpi_dict.get("gross_margin")
+            if "gross_margin" in kpi_dict
+            else (
+                gross_profit / revenue * 100
+                if revenue not in (None, 0) and gross_profit is not None
+                else None
+            )
+        )
+        operating_loss = pnl_dict.get("Group operating loss")
+        if operating_loss is None:
+            operating_loss = pnl_dict.get("Operating loss")
+        operating_margin = kpi_dict.get("operating_margin")
+        if (
+            operating_margin is None
+            and revenue not in (None, 0)
+            and operating_loss is not None
+        ):
+            operating_margin = operating_loss / revenue * 100
 
-        cash = bs_dict.get("Cash and cash equivalents") or bs_dict.get("Cash and bank balances")
-        debt = abs(bs_dict.get("Creditors < 1yr") or 0) + abs(bs_dict.get("Creditors > 1yr") or 0)
+        cash = kpi_dict.get("cash")
+        if cash is None:
+            cash = bs_dict.get("Cash and cash equivalents")
+        if cash is None:
+            cash = bs_dict.get("Cash and bank balances")
+        short_debt = bs_dict.get("Creditors < 1yr")
+        long_debt = bs_dict.get("Creditors > 1yr")
+        debt = (
+            abs(short_debt) + abs(long_debt)
+            if short_debt is not None and long_debt is not None
+            else None
+        )
 
         runway = kpi_dict.get("runway_months")
 
         summaries.append(FinancialSummary(
             period=PeriodResponse.model_validate(p),
+            duration_months=period_duration_months(p.start_date, p.end_date),
             revenue=revenue,
+            revenue_origin="reported" if revenue is not None else "n/d",
             gross_profit=gross_profit,
+            gross_profit_origin="reported" if gross_profit is not None else "n/d",
             gross_margin=gross_margin,
+            gross_margin_origin="derived" if gross_margin is not None else "n/d",
             operating_loss=operating_loss,
+            operating_loss_origin="reported" if operating_loss is not None else "n/d",
+            operating_margin=operating_margin,
+            operating_margin_origin="derived" if operating_margin is not None else "n/d",
             cash=cash,
+            cash_origin="reported" if cash is not None else "n/d",
             debt=debt,
+            debt_origin="derived" if debt is not None else "n/d",
             runway_months=runway,
+            runway_origin="derived" if runway is not None else "n/d",
         ))
+
+    for summary in summaries:
+        start = summary.period.start_date
+        prior_year = start.year - 1
+        prior_start = start.replace(
+            year=prior_year,
+            day=min(start.day, calendar.monthrange(prior_year, start.month)[1]),
+        )
+        prior = next(
+            (
+                candidate
+                for candidate in summaries
+                if candidate.period.start_date == prior_start
+                and candidate.duration_months == summary.duration_months
+            ),
+            None,
+        )
+        if prior is None:
+            continue
+        summary.revenue_yoy_period_label = prior.period.label
+        if (
+            summary.revenue is not None
+            and prior.revenue not in (None, 0)
+        ):
+            summary.revenue_yoy_change_pct = (
+                (summary.revenue - prior.revenue) / abs(prior.revenue) * 100
+            )
 
     return summaries
 
@@ -127,11 +240,19 @@ async def get_kpis(
     user: User = Depends(get_current_user),
 ):
     result = await db.execute(
-        select(KPI)
-        .join(Period)
+        select(Period)
+        .options(
+            selectinload(Period.pnl_items),
+            selectinload(Period.bs_items),
+            selectinload(Period.cf_items),
+            selectinload(Period.kpis),
+        )
         .where(Period.label == period_label)
     )
-    return result.scalars().all()
+    period = result.scalar_one_or_none()
+    if period is None:
+        raise HTTPException(status_code=404, detail=f"Unknown period: {period_label}")
+    return _period_kpi_responses(period)
 
 
 @router.get("/insights/{period_label}", response_model=List[AIInsight])

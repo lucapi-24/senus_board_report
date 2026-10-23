@@ -7,10 +7,10 @@ describe('toNumber', () => {
     expect(toNumber('-483753.00')).toBe(-483753)
   })
 
-  it('returns 0 for null/undefined/invalid', () => {
-    expect(toNumber(null)).toBe(0)
-    expect(toNumber(undefined)).toBe(0)
-    expect(toNumber('n/a')).toBe(0)
+  it('preserves null/undefined/invalid as unavailable', () => {
+    expect(toNumber(null)).toBeNull()
+    expect(toNumber(undefined)).toBeNull()
+    expect(toNumber('n/a')).toBeNull()
   })
 })
 
@@ -19,9 +19,10 @@ describe('formatPct', () => {
     expect(formatPct(81.7197)).toBe('81.7%')
   })
 
-  it('renders an em dash for missing values', () => {
-    expect(formatPct(null)).toBe('—')
-    expect(formatPct(undefined)).toBe('—')
+  it('renders n/d for missing values', () => {
+    expect(formatPct(null)).toBe('n/d')
+    expect(formatPct(undefined)).toBe('n/d')
+    expect(formatPct(Number.NaN)).toBe('n/d')
   })
 })
 

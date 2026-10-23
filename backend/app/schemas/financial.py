@@ -25,6 +25,7 @@ class LineItemResponse(BaseModel):
     line_item: str
     value_eur: float
     page: Optional[int] = None
+    origin: Optional[str] = None
     review_status: Optional[str] = None
     confidence: Optional[float] = None
     original_value: Optional[float] = None
@@ -56,7 +57,8 @@ class KPIResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     metric: str
-    value: float
+    value: Optional[float] = None
+    formula: Optional[str] = None
     kind: Optional[str] = None
     note: Optional[str] = None
 
@@ -74,13 +76,25 @@ class PeriodDetailResponse(PeriodResponse):
 
 class FinancialSummary(BaseModel):
     period: PeriodResponse
+    duration_months: int
     revenue: Optional[float] = None
+    revenue_origin: str = "n/d"
     gross_profit: Optional[float] = None
+    gross_profit_origin: str = "n/d"
     gross_margin: Optional[float] = None
+    gross_margin_origin: str = "n/d"
     operating_loss: Optional[float] = None
+    operating_loss_origin: str = "n/d"
+    operating_margin: Optional[float] = None
+    operating_margin_origin: str = "n/d"
     cash: Optional[float] = None
+    cash_origin: str = "n/d"
     debt: Optional[float] = None
+    debt_origin: str = "n/d"
     runway_months: Optional[float] = None
+    runway_origin: str = "n/d"
+    revenue_yoy_change_pct: Optional[float] = None
+    revenue_yoy_period_label: Optional[str] = None
 
 
 class AIInsight(BaseModel):

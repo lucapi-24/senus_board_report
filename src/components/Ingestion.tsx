@@ -34,6 +34,7 @@ function merge(
     return {
       ...item,
       value: live?.value_eur ?? item.value,
+      origin: live?.origin ?? item.origin ?? (item.line_item === 'EBITDA' ? 'derived' : 'reported'),
       review_status: live?.review_status,
     }
   })
@@ -43,6 +44,7 @@ function merge(
       statement,
       line_item: item.line_item,
       value: item.value_eur,
+      origin: item.origin ?? (item.line_item === 'EBITDA' ? 'derived' : 'reported'),
       status: item.review_status === 'reported' ? 'matched' : 'regex_only',
       confidence: item.confidence ?? 0,
       page: item.page ?? null,
@@ -676,6 +678,7 @@ export function Ingestion({ role, onDataChanged }: { role?: string; onDataChange
                               <td>{item.line_item}</td>
                               <td className="num">
                                 {formatEur(item.value)}
+                                <span className="data-origin">{item.origin ?? 'n/d'}</span>
                                 {other !== null && (
                                   <span className="review-table__other">
                                     vs {formatEur(other)}

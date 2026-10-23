@@ -7,20 +7,37 @@
   },
   "balance_sheet": {},
   "cash_flow": {},
-  "kpis": {},
+  "kpis": {
+    "cash": "140135",
+    "customer_accounts": "138"
+  },
+  "kpi_sources": {
+    "cash": "HY2026 cash flow opening balance",
+    "customer_accounts": "Assignment brief"
+  },
   "narrative_insights": {},
-  "source_file": "Senus_HY2026_Interim_Results.pdf",
+  "source_file": null,
   "metadata": {
-    "document_title": "FY2025 (revenue only, from the business review narrative)",
+    "document_title": "FY2025 partial data (assignment brief and HY2026 cash flow)",
+    "source_description": "Revenue and customer accounts: assignment brief. Cash: HY2026 cash flow opening balance.",
     "currency": "EUR",
     "period_months": 12,
     "audited": false,
     "customers": 138
   },
-  "provenance": {
+  "field_sources": {
     "pnl": {
-      "Revenue": 9
+      "Revenue": "Assignment brief"
     },
+    "kpis": {
+      "cash": "HY2026 cash flow opening balance",
+      "customer_accounts": "Assignment brief"
+    },
+    "balance_sheet": {},
+    "cash_flow": {}
+  },
+  "provenance": {
+    "pnl": {},
     "balance_sheet": {},
     "cash_flow": {}
   }

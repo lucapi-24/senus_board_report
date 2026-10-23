@@ -116,4 +116,4 @@ def test_compute_kpis_from_fixture():
     assert round(kpis["runway_months"], 2) == 10.53
     assert round(kpis["current_ratio"], 2) == 0.75
     # DSCR is meaningless with negative operating cash flow.
-    assert "dscr" not in kpis
+    assert kpis["dscr"] is None

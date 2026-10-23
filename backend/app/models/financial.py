@@ -89,6 +89,7 @@ class StatementItemMixin:
     """Shared review/provenance columns for the three financial statements."""
 
     page = Column(Integer, nullable=True)
+    origin = Column(String(20), nullable=False, server_default="reported")
     review_status = Column(String(20), nullable=False, server_default="reported")
     confidence = Column(Float, nullable=True)
     original_value = Column(Numeric(15, 2), nullable=True)   # value before a manual correction
@@ -131,7 +132,7 @@ class KPI(Base):
 
     period_id = Column(Integer, ForeignKey("periods.id", ondelete="CASCADE"), primary_key=True)
     metric = Column(String(50), primary_key=True)   # gross_margin, dscr, runway_months, …
-    value = Column(Numeric(15, 4), nullable=False)
+    value = Column(Numeric(15, 4), nullable=True)
 
     formula = Column(Text, nullable=True)           # human-readable formula
     kind = Column(String(20), nullable=False, server_default="derived")  # reported | derived | na
