@@ -3,6 +3,7 @@ import { Check, FileUp } from 'lucide-react'
 import {
   api,
   formatEur,
+  type DetectedPeriod,
   type DocumentDetail,
   type DocumentSummary,
   type Period,
@@ -70,11 +71,9 @@ export function Ingestion({ role, onDataChanged }: { role?: string; onDataChange
 
   const [file, setFile] = useState<File | null>(null)
   const [docType, setDocType] = useState('interim_results')
+  const [periodDates, setPeriodDates] = useState<Record<number, { start: string; end: string }>>({})
 
   const [editingDocId, setEditingDocId] = useState<number | null>(null)
-  const [editLabel, setEditLabel] = useState('')
-  const [editStart, setEditStart] = useState('')
-  const [editEnd, setEditEnd] = useState('')
   const [editDocType, setEditDocType] = useState('interim_results')
 
   const loadDocuments = async () => {
@@ -95,6 +94,14 @@ export function Ingestion({ role, onDataChanged }: { role?: string; onDataChange
     setError('')
     const detailData = await api.document(id)
     setDetail(detailData)
+    setPeriodDates(
+      Object.fromEntries(
+        (detailData.detected_periods ?? []).map((detected) => [
+          detected.column ?? 0,
+          { start: detected.start_date ?? '', end: detected.end_date ?? '' },
+        ]),
+      ),
+    )
     try {
       const docPeriods = await api.documentPeriods(id)
       setPeriods(docPeriods)
@@ -147,16 +154,8 @@ export function Ingestion({ role, onDataChanged }: { role?: string; onDataChange
       })
       setFile(null)
       setDocType('interim_results')
-      try {
-        await api.processDocument(created.id)
-      } catch (error) {
-        await loadDocuments()
-        await openDocument(created.id)
-        throw error
-      }
       await loadDocuments()
       await openDocument(created.id)
-      onDataChanged?.()
     })
 
   const handleProcess = (id: number) =>
@@ -238,12 +237,7 @@ export function Ingestion({ role, onDataChanged }: { role?: string; onDataChange
 
   const handleEditSave = async (id: number) => {
     await run(`edit-${id}`, async () => {
-      const editedDoc = documents.find((document) => document.id === id)
-      const isPublished = editedDoc?.status === 'published'
       await api.updateDocument(id, {
-        period_label: isPublished ? undefined : editLabel || undefined,
-        start_date: isPublished ? undefined : editStart || undefined,
-        end_date: isPublished ? undefined : editEnd || undefined,
         doc_type: editDocType || undefined,
       })
       setEditingDocId(null)
@@ -257,16 +251,29 @@ export function Ingestion({ role, onDataChanged }: { role?: string; onDataChange
 
   const handleEditCancel = () => {
     setEditingDocId(null)
-    if (editingDocId) {
-      const doc = documents.find((d) => d.id === editingDocId)
-      if (doc) {
-        setEditLabel(doc.period_label ?? '')
-        setEditStart(doc.period_start ?? '')
-        setEditEnd(doc.period_end ?? '')
-        setEditDocType(doc.doc_type ?? 'interim_results')
-      }
-    }
+    const doc = documents.find((d) => d.id === editingDocId)
+    if (doc) setEditDocType(doc.doc_type ?? 'interim_results')
   }
+
+  const handleConfirmPeriods = () =>
+    run('confirm-periods', async () => {
+      if (!detail) throw new Error('Select a document first')
+      const periods = (detail.detected_periods ?? []).map((detected: DetectedPeriod) => {
+        const dates = periodDates[detected.column ?? 0]
+        if (!dates?.start || !dates.end) {
+          throw new Error(`Enter both dates for column ${(detected.column ?? 0) + 1}`)
+        }
+        return {
+          column: detected.column ?? 0,
+          start_date: dates.start,
+          end_date: dates.end,
+        }
+      })
+      const updated = await api.confirmDocumentPeriods(detail.id, { periods })
+      setDetail((previous) => previous ? { ...previous, ...updated } : previous)
+      await loadDocuments()
+      onDataChanged?.()
+    })
 
   const pending = period
     ? [...period.pnl, ...period.balance_sheet, ...period.cash_flow].filter(
@@ -294,8 +301,8 @@ export function Ingestion({ role, onDataChanged }: { role?: string; onDataChange
             <span className="dashboard__eyebrow">INGESTION</span>
             <h1 className="dashboard__title">Documents &amp; Review</h1>
             <p className="dashboard__lede">
-              Upload a source PDF, extract it with two independent extractors, then confirm or correct
-              every figure before publishing.
+              Upload a source PDF, confirm its reporting periods, then review extracted figures before
+              publishing.
             </p>
           </div>
         </div>
@@ -347,7 +354,7 @@ export function Ingestion({ role, onDataChanged }: { role?: string; onDataChange
                 disabled={busy === 'upload' || !file}
                 onClick={handleUpload}
               >
-                {busy === 'upload' ? 'Uploading & processing…' : 'Upload'}
+                {busy === 'upload' ? 'Uploading…' : 'Upload'}
               </button>
             </div>
           </section>
@@ -387,33 +394,13 @@ export function Ingestion({ role, onDataChanged }: { role?: string; onDataChange
                     <div className="doc-row__actions">
                       {editingDocId === doc.id ? (
                         <>
-                          <label className="field" style={{ margin: 0, flex: 1, minWidth: 120 }}>
-                            <span>Period</span>
-                            <input
-                              type="text"
-                              value={editLabel}
-                              disabled={doc.status === 'published'}
-                              onChange={(e) => setEditLabel(e.target.value)}
-                              placeholder="HY2026"
-                            />
-                          </label>
-                          <label className="field" style={{ margin: 0, flex: 1, minWidth: 110 }}>
-                            <span>Start</span>
-                            <input
-                              type="date"
-                              value={editStart}
-                              disabled={doc.status === 'published'}
-                              onChange={(e) => setEditStart(e.target.value)}
-                            />
-                          </label>
-                          <label className="field" style={{ margin: 0, flex: 1, minWidth: 110 }}>
-                            <span>End</span>
-                            <input
-                              type="date"
-                              value={editEnd}
-                              disabled={doc.status === 'published'}
-                              onChange={(e) => setEditEnd(e.target.value)}
-                            />
+                          <label className="field" style={{ margin: 0, flex: 1, minWidth: 180 }}>
+                            <span>Document type</span>
+                            <select value={editDocType} onChange={(e) => setEditDocType(e.target.value)}>
+                              <option value="interim_results">Interim results</option>
+                              <option value="annual_report">Annual report</option>
+                              <option value="management_accounts">Management accounts</option>
+                            </select>
                           </label>
                           <button
                             type="button"
@@ -427,22 +414,24 @@ export function Ingestion({ role, onDataChanged }: { role?: string; onDataChange
                             Cancel
                           </button>
                           {doc.status === 'published' && (
-                            <span className="muted small">
-                              Published periods are locked; only the document type can be changed.
-                            </span>
+                            <span className="muted small">Published periods cannot be edited.</span>
                           )}
                         </>
                       ) : (
                         <>
                           {isAdmin && (doc.status === 'uploaded' || doc.status === 'error') && (
-                            <button
-                              type="button"
-                              className="btn btn--small"
-                              disabled={busy === 'process'}
-                              onClick={() => handleProcess(doc.id)}
-                            >
-                              Process
-                            </button>
+                            doc.periods_confirmed ? (
+                              <button
+                                type="button"
+                                className="btn btn--small"
+                                disabled={busy === 'process'}
+                                onClick={() => handleProcess(doc.id)}
+                              >
+                                Process
+                              </button>
+                            ) : (
+                              <span className="muted small">Confirm periods before processing</span>
+                            )
                           )}
                           {doc.status === 'processing' && (
                             <button type="button" className="btn btn--small" disabled>
@@ -476,9 +465,6 @@ export function Ingestion({ role, onDataChanged }: { role?: string; onDataChange
                               className="btn btn--small btn--outline"
                               onClick={() => {
                                 setEditingDocId(doc.id)
-                                setEditLabel(doc.period_label ?? '')
-                                setEditStart(doc.period_start ?? '')
-                                setEditEnd(doc.period_end ?? '')
                                 setEditDocType(doc.doc_type ?? 'interim_results')
                               }}
                             >
@@ -504,6 +490,77 @@ export function Ingestion({ role, onDataChanged }: { role?: string; onDataChange
             </ul>
           )}
           </section>
+
+          {isAdmin &&
+            detail &&
+            !detail.periods_confirmed &&
+            (detail.status === 'uploaded' || detail.status === 'error') && (
+              <section className="panel">
+                <h2 className="panel__title">Confirm reporting periods before extraction</h2>
+                <p className="muted">
+                  Dates determine the period label. Labels are calculated automatically and cannot be
+                  edited independently.
+                </p>
+                {(detail.detected_periods ?? []).map((detected) => {
+                  const column = detected.column ?? 0
+                  const dates = periodDates[column] ?? { start: '', end: '' }
+                  return (
+                    <div className="upload-grid" key={column}>
+                      <div>
+                        <strong>Column {column + 1}</strong>
+                        <p className="muted small">
+                          {detected.label ?? 'Dates not detected'} · pages{' '}
+                          {detected.pages?.length ? detected.pages.join(', ') : 'not identified'}
+                          {detected.duration_months ? ` · ${detected.duration_months} months` : ''}
+                        </p>
+                      </div>
+                      <label className="field">
+                        <span>Start date</span>
+                        <input
+                          type="date"
+                          value={dates.start}
+                          onChange={(event) =>
+                            setPeriodDates((previous) => ({
+                              ...previous,
+                              [column]: { ...dates, start: event.target.value },
+                            }))
+                          }
+                        />
+                      </label>
+                      <label className="field">
+                        <span>End date</span>
+                        <input
+                          type="date"
+                          value={dates.end}
+                          onChange={(event) =>
+                            setPeriodDates((previous) => ({
+                              ...previous,
+                              [column]: { ...dates, end: event.target.value },
+                            }))
+                          }
+                        />
+                      </label>
+                    </div>
+                  )
+                })}
+                {detail.period_validation_errors?.length ? (
+                  <div className="callout callout--error">
+                    <strong>Period checks need attention:</strong>
+                    <ul>
+                      {detail.period_validation_errors.map((issue) => <li key={issue}>{issue}</li>)}
+                    </ul>
+                  </div>
+                ) : null}
+                <button
+                  type="button"
+                  className="btn btn--primary"
+                  disabled={busy === 'confirm-periods'}
+                  onClick={handleConfirmPeriods}
+                >
+                  {busy === 'confirm-periods' ? 'Checking periods…' : 'Confirm periods'}
+                </button>
+              </section>
+            )}
 
           {detail?.error && <div className="callout callout--error">{detail.error}</div>}
 

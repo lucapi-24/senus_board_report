@@ -14,8 +14,10 @@ from app.core.database import get_db
 from app.core.security import get_current_user, require_admin
 from app.models.financial import AuditLog, Document, Period, User
 from app.schemas.documents import (
+    ConfirmPeriodsRequest,
     DocumentDetailResponse,
     DocumentResponse,
+    DetectedPeriod,
     DocumentUpdate,
 )
 from app.schemas.financial import PeriodResponse
@@ -29,15 +31,40 @@ UPLOAD_DIR = Path(__file__).resolve().parents[2] / settings.UPLOAD_DIR
 
 
 def _reload(doc: Document) -> DocumentResponse:
-    return DocumentResponse.model_validate(doc)
+    return _document_response(doc)
+
+
+def _period_state(doc: Document) -> dict:
+    if not doc.periods_detected_json:
+        return {"periods": [], "statement_periods": {}, "confirmed": False, "validation_errors": []}
+    try:
+        state = json.loads(doc.periods_detected_json)
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=500, detail="Stored detected periods are invalid.") from exc
+    if isinstance(state, list):
+        return {"periods": state, "statement_periods": {}, "confirmed": False, "validation_errors": []}
+    if not isinstance(state, dict) or not isinstance(state.get("periods"), list):
+        raise HTTPException(status_code=500, detail="Stored detected periods are invalid.")
+    state.setdefault("statement_periods", {})
+    state.setdefault("confirmed", False)
+    state.setdefault("validation_errors", [])
+    return state
+
+
+def _document_response(doc: Document) -> DocumentResponse:
+    response = DocumentResponse.model_validate(doc)
+    state = _period_state(doc)
+    response.detected_periods = [
+        DetectedPeriod.model_validate(period) for period in state["periods"]
+    ]
+    response.periods_confirmed = state["confirmed"]
+    response.period_validation_errors = state["validation_errors"]
+    return response
 
 
 @router.post("", response_model=DocumentResponse, status_code=201)
 async def upload_document(
     file: UploadFile = File(...),
-    period_label: Optional[str] = Form(None),
-    start_date: Optional[date] = Form(None),
-    end_date: Optional[date] = Form(None),
     doc_type: Optional[str] = Form(None),
     db: AsyncSession = Depends(get_db),
     user: User = Depends(require_admin),
@@ -60,31 +87,44 @@ async def upload_document(
     pages = read_pages(str(stored))
     detected = period_detector.detect_all_periods(pages)
 
-    # Build detected_periods for the response
     detected_periods = [
         {
             "label": p.label,
-            "start_date": p.start_date.isoformat(),
-            "end_date": p.end_date.isoformat(),
+            "start_date": p.start_date.isoformat() if p.start_date else None,
+            "end_date": p.end_date.isoformat() if p.end_date else None,
             "column": p.column,
             "pages": p.pages,
             "source": p.source,
             "score": p.score,
             "is_primary": p.is_primary,
+            "duration_months": period_detector.period_duration_months(p.start_date, p.end_date)
+            if p.start_date and p.end_date else None,
         }
         for p in detected
     ]
+    statement_periods, _ = period_detector.statement_header_periods(pages)
+    stored_statement_periods = {
+        statement: [[start.isoformat(), end.isoformat()] for start, end in values]
+        for statement, values in statement_periods.items()
+    }
+    validation_errors = period_detector.validate_detected_periods(
+        detected_periods, statement_periods
+    )
 
     # Store detected periods on the document for later confirmation
     doc = Document(
         filename=original,
         stored_path=str(stored),
         doc_type=doc_type,
-        period_label=period_label,
-        period_start=start_date,
-        period_end=end_date,
         status=lifecycle.UPLOADED,
-        periods_detected_json=json.dumps(detected_periods),
+        periods_detected_json=json.dumps(
+            {
+                "periods": detected_periods,
+                "statement_periods": stored_statement_periods,
+                "confirmed": False,
+                "validation_errors": validation_errors,
+            }
+        ),
         periods_manually_edited=False,
     )
     db.add(doc)
@@ -95,16 +135,14 @@ async def upload_document(
             action="upload",
             entity="document",
             entity_id=doc.id,
-            after_json=json.dumps({"filename": original, "period_label": period_label}),
+            after_json=json.dumps({"filename": original}),
         )
     )
     await db.commit()
     await db.refresh(doc)
 
     # Build response including detected periods
-    response = DocumentResponse.model_validate(doc)
-    response.detected_periods = detected_periods
-    return response
+    return _document_response(doc)
 
 
 @router.get("", response_model=List[DocumentResponse])
@@ -113,7 +151,7 @@ async def list_documents(
     user: User = Depends(get_current_user),
 ):
     result = await db.execute(select(Document).order_by(Document.uploaded_at.desc()))
-    return list(result.scalars().all())
+    return [_document_response(doc) for doc in result.scalars().all()]
 
 
 @router.get("/{document_id}", response_model=DocumentDetailResponse)
@@ -126,6 +164,10 @@ async def get_document(
     if doc is None:
         raise HTTPException(status_code=404, detail="Document not found")
     detail = DocumentDetailResponse.model_validate(doc)
+    period_response = _document_response(doc)
+    detail.detected_periods = period_response.detected_periods
+    detail.periods_confirmed = period_response.periods_confirmed
+    detail.period_validation_errors = period_response.period_validation_errors
     if doc.raw_json:
         try:
             stored_review = json.loads(doc.raw_json)
@@ -138,59 +180,154 @@ async def get_document(
     return detail
 
 
+@router.post("/{document_id}/confirm-periods", response_model=DocumentResponse)
+async def confirm_document_periods(
+    document_id: int,
+    payload: ConfirmPeriodsRequest,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require_admin),
+):
+    """Confirm or manually correct dates before any financial extraction."""
+    doc = await db.get(Document, document_id)
+    if doc is None:
+        raise HTTPException(status_code=404, detail="Document not found")
+    if doc.status not in (lifecycle.UPLOADED, lifecycle.ERROR):
+        raise HTTPException(status_code=409, detail="Periods can only be confirmed before processing.")
+
+    state = _period_state(doc)
+    detected_periods = state["periods"]
+    expected_columns = {period.get("column") for period in detected_periods}
+    supplied_columns = [period.column for period in payload.periods]
+    if len(set(supplied_columns)) != len(supplied_columns) or set(supplied_columns) != expected_columns:
+        raise HTTPException(status_code=422, detail="Provide dates for every detected column exactly once.")
+
+    from app.services.period_detector import derive_label
+
+    previous_by_column = {period.get("column"): period for period in detected_periods}
+    updated_periods = []
+    manually_changed = []
+    for item in payload.periods:
+        previous = previous_by_column[item.column]
+        label = derive_label(item.start_date, item.end_date)
+        updated = {
+            **previous,
+            "label": label,
+            "start_date": item.start_date.isoformat(),
+            "end_date": item.end_date.isoformat(),
+            "duration_months": period_detector.period_duration_months(item.start_date, item.end_date),
+        }
+        updated_periods.append(updated)
+        old_dates = (previous.get("start_date"), previous.get("end_date"))
+        new_dates = (item.start_date.isoformat(), item.end_date.isoformat())
+        if old_dates != new_dates:
+            manually_changed.append(
+                {
+                    "column": item.column,
+                    "before": {
+                        "start_date": old_dates[0],
+                        "end_date": old_dates[1],
+                        "label": previous.get("label"),
+                    },
+                    "after": {
+                        "start_date": new_dates[0],
+                        "end_date": new_dates[1],
+                        "label": label,
+                    },
+                }
+            )
+
+    errors = period_detector.validate_detected_periods(
+        updated_periods, _parse_statement_periods(state.get("statement_periods", {}))
+    )
+    state.update(
+        periods=updated_periods,
+        confirmed=not errors,
+        validation_errors=errors,
+    )
+    doc.periods_detected_json = json.dumps(state)
+    doc.period_label = next((period["label"] for period in updated_periods if period.get("column") == 0), None)
+    primary = next((period for period in updated_periods if period.get("column") == 0), None)
+    if primary:
+        doc.period_start = date.fromisoformat(primary["start_date"])
+        doc.period_end = date.fromisoformat(primary["end_date"])
+    if manually_changed:
+        doc.periods_manually_edited = True
+        doc.edited_by = user.email
+        doc.edited_at = datetime.now(timezone.utc)
+        for change in manually_changed:
+            db.add(
+                AuditLog(
+                    user_email=user.email,
+                    action="edit_period_dates",
+                    entity="document",
+                    entity_id=doc.id,
+                    before_json=json.dumps(change["before"]),
+                    after_json=json.dumps(change["after"]),
+                )
+            )
+    db.add(
+        AuditLog(
+            user_email=user.email,
+            action="confirm_periods" if not errors else "validate_periods",
+            entity="document",
+            entity_id=doc.id,
+            after_json=json.dumps({"confirmed": not errors, "errors": errors}),
+        )
+    )
+    await db.commit()
+    await db.refresh(doc)
+    return _document_response(doc)
+
+
+def _parse_statement_periods(state: dict) -> dict:
+    parsed = {}
+    for statement, values in state.items():
+        parsed[statement] = [
+            (date.fromisoformat(start), date.fromisoformat(end))
+            for start, end in values
+        ]
+    return parsed
+
+
 @router.post("/{document_id}/process", response_model=DocumentResponse)
 async def process_document(
     document_id: int,
     db: AsyncSession = Depends(get_db),
     user: User = Depends(require_admin),
 ):
-    """Run the hybrid extraction and persist the resulting period(s) for review.
-
-    Processes each detected period in the document using its corresponding
-    table column. If no periods were detected, falls back to the document's
-    stored period_label/dates.
-    """
+    """Process only periods that passed the explicit confirmation step."""
     doc = await db.get(Document, document_id)
     if doc is None:
         raise HTTPException(status_code=404, detail="Document not found")
 
-    pages = read_pages(doc.stored_path)
+    state = _period_state(doc)
+    if not state["confirmed"] or state["validation_errors"]:
+        raise HTTPException(status_code=409, detail="Confirm all reporting periods before processing.")
+    detected = state["periods"]
+    if not detected or any(not p.get("start_date") or not p.get("end_date") for p in detected):
+        raise HTTPException(status_code=409, detail="Confirm valid dates for every detected column.")
 
-    # Determine which period(s) to process
-    detected = []
-    if doc.periods_detected_json:
-        try:
-            detected = json.loads(doc.periods_detected_json)
-        except json.JSONDecodeError as exc:
-            raise HTTPException(status_code=500, detail="Stored detected periods are invalid.") from exc
-        if not isinstance(detected, list) or any(not isinstance(period, dict) for period in detected):
-            raise HTTPException(status_code=500, detail="Stored detected periods are invalid.")
-
-    if detected:
-        # The PDF's detected columns are processed together without a manual
-        # label-confirmation step.
-        for pd in detected:
-            column = pd.get("column", 0)
-            start = pd.get("start_date")
-            end = pd.get("end_date")
-            label = pd.get("label")
-            if not (start and end and label):
-                continue
-            start_d = date.fromisoformat(start)
-            end_d = date.fromisoformat(end)
-            # Temporarily set doc fields so ingest_document uses them
-            doc.period_label = label
-            doc.period_start = start_d
-            doc.period_end = end_d
-            await ingest_document(document_id, db, column=column, period_label=label, start_date=start_d, end_date=end_d)
-    else:
-        # Fallback: use stored document dates
-        if not (doc.period_label and doc.period_start and doc.period_end):
-            raise HTTPException(
-                status_code=400,
-                detail="No periods detected in document and no period label/dates provided.",
-            )
-        await ingest_document(document_id, db)
+    for pd in sorted(detected, key=lambda period: period["column"]):
+        start_d = date.fromisoformat(pd["start_date"])
+        end_d = date.fromisoformat(pd["end_date"])
+        label = period_detector.derive_label(start_d, end_d)
+        doc.period_label = label
+        doc.period_start = start_d
+        doc.period_end = end_d
+        await ingest_document(
+            document_id,
+            db,
+            column=pd["column"],
+            period_label=label,
+            start_date=start_d,
+            end_date=end_d,
+        )
+    primary = next((period for period in detected if period["column"] == 0), detected[0])
+    doc.period_label = period_detector.derive_label(
+        date.fromisoformat(primary["start_date"]), date.fromisoformat(primary["end_date"])
+    )
+    doc.period_start = date.fromisoformat(primary["start_date"])
+    doc.period_end = date.fromisoformat(primary["end_date"])
 
     db.add(
         AuditLog(user_email=user.email, action="process", entity="document", entity_id=document_id)
@@ -207,46 +344,13 @@ async def update_document(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(require_admin),
 ):
-    """Update a document's period label, dates, or type after upload.
-
-    If start_date/end_date change, the label is recalculated from the dates
-    (fiscal year ends 30 June). Marks the document as manually edited.
-    """
+    """Update a document's type. Reporting dates are edited via confirmation."""
     doc = await db.get(Document, document_id)
     if doc is None:
         raise HTTPException(status_code=404, detail="Document not found")
 
-    if doc.status == "published" and any(
-        value is not None
-        for value in (payload.period_label, payload.start_date, payload.end_date)
-    ):
-        raise HTTPException(
-            status_code=409,
-            detail="Cannot change the reporting period of a published document",
-        )
-
-    dates_changed = False
-    if payload.start_date is not None:
-        doc.period_start = payload.start_date
-        dates_changed = True
-    if payload.end_date is not None:
-        doc.period_end = payload.end_date
-        dates_changed = True
-
-    # Recalculate label from dates if dates changed
-    if dates_changed and doc.period_start and doc.period_end:
-        from app.services.period_detector import derive_label
-        doc.period_label = derive_label(doc.period_start, doc.period_end)
-
-    if payload.period_label is not None:
-        doc.period_label = payload.period_label
     if payload.doc_type is not None:
         doc.doc_type = payload.doc_type
-
-    if dates_changed or payload.period_label is not None:
-        doc.periods_manually_edited = True
-        doc.edited_by = user.email
-        doc.edited_at = datetime.now(timezone.utc)
 
     db.add(
         AuditLog(
@@ -256,9 +360,6 @@ async def update_document(
             entity_id=doc.id,
             after_json=json.dumps(
                 {
-                    "period_label": doc.period_label,
-                    "start_date": str(doc.period_start),
-                    "end_date": str(doc.period_end),
                     "doc_type": doc.doc_type,
                 }
             ),

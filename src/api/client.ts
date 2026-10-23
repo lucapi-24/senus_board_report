@@ -145,6 +145,8 @@ export interface DocumentSummary {
   uploaded_at: string | null
   extracted_at: string | null
   detected_periods?: DetectedPeriod[]
+  periods_confirmed?: boolean
+  period_validation_errors?: string[]
   periods_manually_edited?: boolean
   edited_by?: string | null
   edited_at?: string | null
@@ -180,21 +182,19 @@ async function send<T>(path: string, method: string, body?: unknown): Promise<T 
 }
 
 export interface UploadFields {
-  period_label?: string
-  start_date?: string
-  end_date?: string
   doc_type?: string
 }
 
 export interface DetectedPeriod {
-  label: string
-  start_date: string
-  end_date: string
+  label: string | null
+  start_date: string | null
+  end_date: string | null
   column?: number
   pages?: number[]
   source?: string
   score?: number
   is_primary?: boolean
+  duration_months?: number | null
 }
 
 export const api = {
@@ -256,9 +256,6 @@ export const api = {
   uploadDocument: async (file: File, fields: UploadFields) => {
     const form = new FormData()
     form.append('file', file)
-    if (fields.period_label) form.append('period_label', fields.period_label)
-    if (fields.start_date) form.append('start_date', fields.start_date)
-    if (fields.end_date) form.append('end_date', fields.end_date)
     if (fields.doc_type) form.append('doc_type', fields.doc_type)
     const res = await fetch(`${API_BASE}/api/documents`, {
       method: 'POST',
@@ -278,12 +275,16 @@ export const api = {
     }
     return (await res.json()) as DocumentSummary
   },
+  confirmDocumentPeriods: (
+    id: number,
+    body: { periods: Array<{ column: number; start_date: string; end_date: string }> },
+  ) => send<DocumentSummary>(`/api/documents/${id}/confirm-periods`, 'POST', body),
   processDocument: (id: number) => send<DocumentSummary>(`/api/documents/${id}/process`, 'POST'),
   publishDocument: (id: number) => send<DocumentSummary>(`/api/documents/${id}/publish`, 'POST'),
   deleteDocument: (id: number) => send<unknown>(`/api/documents/${id}`, 'DELETE'),
   updateDocument: (
     id: number,
-    body: { period_label?: string; start_date?: string; end_date?: string; doc_type?: string },
+    body: { doc_type?: string },
   ) => send<DocumentSummary>(`/api/documents/${id}`, 'PATCH', body),
   updateItem: (
     label: string,

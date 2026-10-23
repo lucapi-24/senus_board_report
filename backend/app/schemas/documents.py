@@ -5,15 +5,16 @@ from pydantic import BaseModel, Field
 
 
 class DetectedPeriod(BaseModel):
-    """A period detected in an uploaded document, ready for confirmation."""
-    label: str
-    start_date: date
-    end_date: date
+    """A dated or unresolved statement column awaiting administrator confirmation."""
+    label: Optional[str] = None
+    start_date: Optional[date] = None
+    end_date: Optional[date] = None
     column: Optional[int] = None
     pages: List[int] = Field(default_factory=list)
     source: str = "regex"
     score: float = 50.0
     is_primary: bool = False
+    duration_months: Optional[int] = None
 
 
 class DocumentResponse(BaseModel):
@@ -30,6 +31,8 @@ class DocumentResponse(BaseModel):
     extracted_at: Optional[datetime] = None
     # New: auto-detected periods from document headers
     detected_periods: List[DetectedPeriod] = Field(default_factory=list)
+    periods_confirmed: bool = False
+    period_validation_errors: List[str] = Field(default_factory=list)
     # New: whether the user manually edited period dates/label
     periods_manually_edited: bool = False
     edited_by: Optional[str] = None
@@ -45,7 +48,14 @@ class DocumentDetailResponse(DocumentResponse):
 
 
 class DocumentUpdate(BaseModel):
-    period_label: Optional[str] = None
-    start_date: Optional[date] = None
-    end_date: Optional[date] = None
     doc_type: Optional[str] = None
+
+
+class PeriodConfirmationInput(BaseModel):
+    column: int = Field(ge=0)
+    start_date: date
+    end_date: date
+
+
+class ConfirmPeriodsRequest(BaseModel):
+    periods: List[PeriodConfirmationInput] = Field(min_length=1)
