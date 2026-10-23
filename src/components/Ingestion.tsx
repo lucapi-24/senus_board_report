@@ -587,7 +587,7 @@ export function Ingestion({ role, onDataChanged }: { role?: string; onDataChange
                       <button
                         type="button"
                         className="btn btn--small"
-                        onClick={() => window.open(`${API_BASE}/api/documents/${detail.id}/file`, '_blank')}
+                        onClick={() => window.open(api.documentFileUrl(detail.id), '_blank')}
                       >
                         View Document
                       </button>

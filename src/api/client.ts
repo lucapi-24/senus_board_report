@@ -229,6 +229,7 @@ export const api = {
   documents: () => get<DocumentSummary[]>('/api/documents'),
   document: (id: number) => get<DocumentDetail>(`/api/documents/${id}`),
   documentPeriods: (id: number) => get<Period[]>(`/api/documents/${id}/periods`),
+  documentFileUrl: (id: number) => `${API_BASE}/api/documents/${id}/file`,
   uploadDocument: async (file: File, fields: UploadFields) => {
     const form = new FormData()
     form.append('file', file)
@@ -243,7 +244,7 @@ export const api = {
     })
     if (!res.ok) {
       onUnauthorized(res.status)
-      let detail: string | null = null
+      let detail: string | null
       try {
         const json = await res.json()
         detail = json.detail ?? null
