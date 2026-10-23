@@ -41,39 +41,93 @@ fixture data into an empty database. Sign in with **board@senus.com / senus123**
 
 ## Architecture
 
-```
-                         ┌──────────────────────────────────────────┐
-                         │              Docker Compose              │
-                         │                                          │
-  Browser ──HTTP──▶ ┌────┴─────┐   /api/*   ┌───────────┐         ┌─┴─────────┐
-                   │ frontend │ ──proxy──▶ │   api     │ ──SQL──▶│ postgres  │
-                   │ nginx    │            │ FastAPI   │ asyncpg │ 16-alpine │
-                   │ :80 →8080│            │ :8000     │         │  :5432    │
-                   └──────────┘            └─────┬─────┘         └───────────┘
-                                                 │
-                                          AI (optional Groq)
-                                      extraction / insights
+```mermaid
+flowchart LR
+    user["Board user / administrator"]
+    browser["Browser<br/>React + TypeScript SPA"]
+    groq["Groq API<br/>optional: GROQ_API_KEY"]
+
+    subgraph compose["Docker Compose"]
+        subgraph frontend["frontend container"]
+            nginx["nginx<br/>serves Vite build<br/>port 80 → host 8080"]
+        end
+
+        subgraph backend["api container"]
+            migrations["Alembic migrations<br/>run before API startup"]
+            api["FastAPI / uvicorn<br/>port 8000"]
+            auth["JWT authentication<br/>viewer / admin checks"]
+            routes["API routes<br/>auth · financial · documents · metrics"]
+            ingest["PDF ingestion services<br/>pdfplumber · period detection"]
+            extract["Deterministic regex extractor<br/>and KPI calculation"]
+            llm["Groq-backed extractor<br/>page grounding"]
+            reconcile["Reconciliation<br/>flagged proposals"]
+            review["Review lifecycle<br/>confirm / correct · validate · publish"]
+            insights["AI insights<br/>and period comparison"]
+            seeder["Startup seeding<br/>demo users + optional fixtures"]
+        end
+
+        db[("PostgreSQL 16<br/>documents · periods · statements · KPIs<br/>users · validations · audit log")]
+        files[("uploads volume<br/>original PDFs")]
+        fixtures["Committed JSON fixtures<br/>backend/scripts/extracted"]
+    end
+
+    user --> browser
+    browser -->|"HTTP: app assets"| nginx
+    browser -->|"API requests: /api/*<br/>Bearer JWT"| nginx
+    nginx -->|"/api/* reverse proxy"| api
+    migrations -->|"schema ready"| api
+    api --> routes
+    routes -->|"login / token verification"| auth
+    auth -->|"authenticated request<br/>and role checks"| routes
+    routes -->|"async SQL"| db
+    routes -->|"upload / download PDF"| files
+    routes --> ingest
+    files -->|"read PDF pages"| ingest
+    ingest --> extract
+    ingest -. "when configured" .-> llm
+    llm -. "structured extraction" .-> groq
+    llm --> reconcile
+    extract --> reconcile
+    reconcile --> review
+    routes -->|"confirm / correct / publish"| review
+    review -->|"store reviewed line items,<br/>KPIs and validations"| db
+    browser -->|"review actions / publish"| routes
+    routes --> insights
+    insights -. "when configured" .-> groq
+    seeder -->|"create demo users"| db
+    fixtures -. "only when SEED_FROM_DISK=true<br/>and no periods exist" .-> seeder
+    compose_note["Compose overrides<br/>SEED_FROM_DISK=false"]
+    compose_note -.-> seeder
 ```
 
-**Runtime document workflow:**
+Solid arrows show the normal runtime path; dotted arrows are optional or
+configuration-dependent. The frontend container serves the compiled React
+application, while nginx also proxies `/api/*` to FastAPI. Alembic applies schema
+migrations before uvicorn starts. PostgreSQL stores application state; the
+separate Compose `uploads` volume stores source PDFs.
 
-```
-uploaded PDF ─▶ period detection ─▶ regex + optional Groq extractor
-             ─▶ page grounding + reconciliation ─▶ human review
-             ─▶ derived KPIs / validations ─▶ publish to PostgreSQL
-```
+**Document processing:** an administrator uploads a PDF; the API stores it and
+detects candidate periods. The deterministic parser and optional Groq extractor
+work independently; LLM figures are checked against cited page text before
+reconciliation. The resulting proposal is persisted for review. Confirming or
+correcting items recomputes KPIs and validations; publishing advances the
+document/period lifecycle. Uploads, processing, edits, review actions and
+publishing are recorded in `audit_log`.
 
-The two extractors run independently. The LLM's extracted values are checked
-against the text on their cited pages, then reconciled with the deterministic
-parser; discrepancies are presented for human review rather than silently
-corrected. Without `GROQ_API_KEY`, processing continues with the deterministic
-extractor only.
+In the current UI, **Confirm & Process** saves the confirmed period labels; the
+administrator then starts extraction with **Process**. The process endpoint
+currently iterates the document's detected periods, so the confirmation is not
+yet used to filter which detected periods are processed.
 
-The offline `backend/scripts/extract_pdf.py` and `backend/scripts/load_data.py`
-scripts remain available to generate and load the committed JSON fixtures. The
-frontend is a static Vite build served by nginx, which also reverse-proxies
-`/api/*` to the backend. PostgreSQL stores application data; uploaded PDFs are
-stored in the Compose `uploads` volume.
+The dashboard also requests AI insights and period comparisons from the API.
+These features, and the LLM extraction pass, use Groq when `GROQ_API_KEY` is
+configured; without it, deterministic extraction and the core dashboard remain
+available, while AI endpoints report that the key is not configured.
+
+For fixture workflows, `backend/scripts/extract_pdf.py` generates extracted JSON
+and `backend/scripts/load_data.py` loads it. On API startup, fixture seeding is
+enabled by default only when the database has no periods; Docker Compose
+explicitly sets `SEED_FROM_DISK=false`.
 
 ---
 
