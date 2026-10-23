@@ -131,7 +131,17 @@ export function Dashboard({ summary, selected }: DashboardProps) {
       .insights(selected)
       .then(setInsights)
       .catch(() =>
-        setInsights([{ section: 'Error', insight: 'Could not reach the AI service.', confidence: 0 }]),
+        setInsights([{
+          section: 'Error',
+          insight: 'Could not reach the AI service.',
+          data: null,
+          interpretation: null,
+          confidence: 0,
+          verified_claims: 0,
+          total_claims: 0,
+          sources: [],
+          evidence: [],
+        }]),
       )
       .finally(() => setInsightsLoading(false))
   }
@@ -927,14 +937,42 @@ export function Dashboard({ summary, selected }: DashboardProps) {
                 <article key={i} className="insight-card">
                   <div className="insight-card__head">
                     <h3>{insight.section}</h3>
-                    <span className="insight-card__confidence">
-                      {(insight.confidence * 100).toFixed(0)}%
-                    </span>
+                    {insight.total_claims > 0 && (
+                      <span className="insight-card__confidence">
+                        {insight.verified_claims}/{insight.total_claims} claims verified
+                      </span>
+                    )}
                   </div>
-                  <p>{insight.insight}</p>
-                  <div className="insight-card__meter">
-                    <span style={{ width: `${Math.round(insight.confidence * 100)}%` }} />
-                  </div>
+                  {insight.data && (
+                    <p className="insight-card__statement">
+                      <strong>Data</strong> {insight.data}
+                    </p>
+                  )}
+                  {insight.interpretation && (
+                    <p className="insight-card__statement">
+                      <strong>Interpretation</strong> {insight.interpretation}
+                    </p>
+                  )}
+                  {!insight.data && !insight.interpretation && <p>{insight.insight}</p>}
+                  {insight.sources.length > 0 && (
+                    <ul className="insight-card__sources" aria-label="Verified data sources">
+                      {insight.sources.map((source, sourceIndex) => (
+                        <li key={`${source.source_id}-${sourceIndex}`}>
+                          <span>
+                            {source.claim_text} → {source.label} ({source.origin})
+                            {source.pages.length > 0 && `, PDF p. ${source.pages.join(', ')}`}
+                          </span>
+                          {source.formula && <small>{source.formula}</small>}
+                          {source.source_note && <small>{source.source_note}</small>}
+                        </li>
+                      ))}
+                      {insight.evidence.map((item, evidenceIndex) => (
+                        <li key={`evidence-${evidenceIndex}`}>
+                          <span>PDF p. {item.page}: “{item.quote}”</span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
                 </article>
               ))}
             </div>

@@ -1,21 +1,79 @@
-from typing import List, Optional
-from decimal import Decimal
+import asyncio
+import json
+import logging
+import math
+import re
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
+
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.orm import selectinload
 from fastapi import HTTPException
-from app.models.financial import Period, PnLItem, BalanceSheetItem, CashFlowItem, KPI
-from app.schemas.financial import AIInsight, PeriodCompareRequest, PeriodCompareResponse
+from app.models.financial import (
+    BalanceSheetItem,
+    CashFlowItem,
+    Document,
+    Insight,
+    Period,
+    PnLItem,
+)
+from app.schemas.financial import (
+    AIInsight,
+    InsightEvidence,
+    InsightSource,
+    PeriodCompareRequest,
+    PeriodCompareResponse,
+)
 from app.core.config import settings
-from app.services.metrics import require_same_period_duration
+from app.services.metrics import CATALOG_BY_KEY, kpi_metadata, require_same_period_duration
 from app.services.period_detector import period_duration_months
 from openai import AsyncOpenAI
 
+
+logger = logging.getLogger(__name__)
 
 client = AsyncOpenAI(
     base_url=settings.GROQ_BASE_URL,
     api_key=settings.GROQ_API_KEY,
 ) if settings.GROQ_API_KEY else None
+
+_NUMBER_RE = re.compile(r"(?<![A-Za-z0-9])[-+]?\d[\d,]*(?:\.\d+)?(?![A-Za-z0-9])")
+_CAUSAL_RE = re.compile(
+    r"\b(?:because|due to|cause[sd]? by|caus(?:e|es|ed|ing)|"
+    r"drive|drives|drove|driven|driving|as a result of|as a consequence of|"
+    r"on the back of|reflect(?:s|ed|ing)?|"
+    r"attributable to|owing to|result(?:s|ed|ing) from|"
+    r"lead(?:s|ing)? to|led to|thanks to|in response to|following|"
+    r"explain(?:s|ed|ing)?|consequently|therefore)\b",
+    re.IGNORECASE,
+)
+_KPI_DEPENDENCIES = {
+    "revenue": ("pnl:Revenue", "pnl:Turnover"),
+    "cash": ("balance_sheet:Cash and cash equivalents", "balance_sheet:Cash and bank balances"),
+    "ebitda": ("pnl:Group operating loss", "pnl:Operating loss", "cash_flow:Depreciation"),
+    "gross_margin": ("pnl:Gross Profit", "pnl:Revenue", "pnl:Turnover"),
+    "operating_margin": ("pnl:Group operating loss", "pnl:Operating loss", "pnl:Revenue", "pnl:Turnover"),
+    "ebitda_margin": ("pnl:Group operating loss", "pnl:Operating loss", "cash_flow:Depreciation", "pnl:Revenue", "pnl:Turnover"),
+    "net_margin": ("pnl:Loss for the period", "pnl:Revenue", "pnl:Turnover"),
+    "admin_expense_ratio": ("pnl:Administrative expenses", "pnl:Revenue", "pnl:Turnover"),
+    "fcf": ("cash_flow:Net cash from operations", "cash_flow:Capex"),
+    "monthly_burn": ("kpi:fcf",),
+    "runway_months": ("kpi:cash", "kpi:monthly_burn"),
+    "net_cash": ("kpi:cash", "balance_sheet:Creditors > 1yr"),
+    "current_ratio": ("balance_sheet:Total current assets", "balance_sheet:Creditors < 1yr", "balance_sheet:Contingent consideration"),
+    "current_ratio_ex_contingent": ("balance_sheet:Total current assets", "balance_sheet:Creditors < 1yr"),
+    "total_assets": ("balance_sheet:Total fixed assets", "balance_sheet:Total current assets"),
+    "equity_ratio": ("balance_sheet:Equity", "balance_sheet:Net Assets", "kpi:total_assets"),
+    "intangibles_ratio": ("balance_sheet:Goodwill", "balance_sheet:Development Costs", "kpi:total_assets"),
+    "debt_to_equity": ("balance_sheet:Creditors > 1yr", "balance_sheet:Equity", "balance_sheet:Net Assets"),
+    "interest_cover": ("pnl:Group operating loss", "pnl:Operating loss", "pnl:Interest payable"),
+    "dscr": ("cash_flow:Net cash from operations", "cash_flow:Interest paid", "cash_flow:Loan repayments"),
+    "roce": ("pnl:Group operating loss", "pnl:Operating loss", "balance_sheet:Total assets", "balance_sheet:Creditors < 1yr"),
+    "roce_annualised": ("kpi:roce",),
+    "roce_ex_contingent": ("pnl:Group operating loss", "pnl:Operating loss", "balance_sheet:Total assets", "balance_sheet:Creditors < 1yr"),
+    "roe": ("pnl:Loss for the period", "balance_sheet:Equity", "balance_sheet:Net Assets"),
+}
 
 
 def _format_money(value: Optional[float]) -> str:
@@ -26,15 +84,321 @@ def _format_kpi(value: Optional[float], digits: int, suffix: str) -> str:
     return f"{value:.{digits}f}{suffix}" if value is not None else "n/d"
 
 
-async def generate_insights(period_label: str, db: AsyncSession) -> List[AIInsight]:
-    """Generate AI-powered financial insights for a period"""
-    if not client:
-        return [AIInsight(
-            section="Configuration",
-            insight="Groq API key not configured. Set GROQ_API_KEY environment variable.",
-            confidence=0.0
-        )]
+def _normalise_text(value: str) -> str:
+    return re.sub(r"\s+", " ", value).strip().casefold()
 
+
+def _number_tolerance(value: Any) -> float:
+    decimals = 0
+    if isinstance(value, str) and "." in value:
+        decimals = len(value.rsplit(".", 1)[1])
+    elif isinstance(value, float):
+        rendered = str(value)
+        if "." in rendered:
+            decimals = len(rendered.rsplit(".", 1)[1])
+    return 0.5 * (10 ** -decimals)
+
+
+def _parse_number(value: str, preceding: str = "") -> Optional[float]:
+    try:
+        number = float(value.replace(",", ""))
+    except ValueError:
+        return None
+    if re.search(r"\(\s*[€$£]?$", preceding):
+        number = -abs(number)
+    return number
+
+
+def _numeric_mentions(*texts: str) -> List[Tuple[float, int]]:
+    mentions: List[Tuple[float, int]] = []
+    for text in texts:
+        for match in _NUMBER_RE.finditer(text or ""):
+            value = _parse_number(match.group(), text[:match.start()])
+            if value is not None:
+                mentions.append((value, len(match.group().partition(".")[2])))
+    return mentions
+
+
+def _source_index(period: Period) -> Dict[str, Dict[str, Any]]:
+    from app.services.deterministic import compute_kpis
+
+    metadata = period.doc_meta or {}
+    provenance = period.doc_provenance or {}
+    source_note = metadata.get("source_description")
+    assignment_source_notes = (
+        {
+            "pnl:Revenue": "Assignment brief",
+            "kpi:revenue": "Assignment brief",
+            "kpi:customer_accounts": "Assignment brief",
+            "kpi:cash": "HY2026 cash flow opening balance",
+        }
+        if period.label == "FY2025" and period.source_doc_id is None
+        else {}
+    )
+    statement_items = {
+        "pnl": period.pnl_items,
+        "balance_sheet": period.bs_items,
+        "cash_flow": period.cf_items,
+    }
+    sources: Dict[str, Dict[str, Any]] = {}
+    values: Dict[str, Dict[str, float]] = {}
+    for statement, items in statement_items.items():
+        values[statement] = {}
+        for item in items:
+            key = f"{statement}:{item.line_item}"
+            page = item.page
+            if page is None:
+                page = provenance.get(statement, {}).get(item.line_item)
+            item_source_note = assignment_source_notes.get(
+                key,
+                source_note if period.source_doc_id is None else None,
+            )
+            sources[key] = {
+                "source_id": key,
+                "label": item.line_item,
+                "value": float(item.value_eur),
+                "origin": item.origin or "reported",
+                "formula": None,
+                "pages": [int(page)] if page is not None else [],
+                "source_note": item_source_note,
+            }
+            values[statement][item.line_item] = float(item.value_eur)
+
+    duration = period_duration_months(period.start_date, period.end_date)
+    computed = compute_kpis(
+        values["pnl"],
+        values["balance_sheet"],
+        values["cash_flow"],
+        duration,
+    )
+    stored_kpis = {item.metric: item for item in period.kpis}
+    for metric, spec in CATALOG_BY_KEY.items():
+        key = f"kpi:{metric}"
+        value = computed.get(metric)
+        stored = stored_kpis.get(metric)
+        if (
+            value is None
+            and metric in {"cash", "customer_accounts"}
+            and stored
+            and stored.value is not None
+        ):
+            value = float(stored.value)
+        if value is None:
+            continue
+        metadata_for_metric = kpi_metadata(
+            metric,
+            value,
+            values["cash_flow"],
+            stored.note if stored else None,
+        )
+        dependency_ids = _KPI_DEPENDENCIES.get(metric, ())
+        dependency_sources = [
+            sources[source_id]
+            for source_id in dependency_ids
+            if source_id in sources
+        ]
+        pages = sorted({page for source in dependency_sources for page in source["pages"]})
+        note = (
+            assignment_source_notes.get(key)
+            or (
+                stored.note
+                if stored and stored.note
+                else source_note
+                if period.source_doc_id is None and metadata_for_metric["kind"] == "reported"
+                else None
+            )
+        )
+        sources[key] = {
+            "source_id": key,
+            "label": str(spec["label"]),
+            "value": float(value),
+            "origin": str(metadata_for_metric["kind"]),
+            "formula": metadata_for_metric["formula"],
+            "pages": pages,
+            "source_note": note,
+        }
+
+    duration_key = "period:duration_months"
+    sources[duration_key] = {
+        "source_id": duration_key,
+        "label": "Period duration (months)",
+        "value": float(duration),
+        "origin": "derived",
+        "formula": "Inclusive months between period start and end dates",
+        "pages": [],
+        "source_note": None,
+    }
+    return sources
+
+
+def _validate_candidate(
+    candidate: Dict[str, Any],
+    source_index: Dict[str, Dict[str, Any]],
+    pdf_pages: Dict[int, str],
+) -> Tuple[Optional[AIInsight], str]:
+    section = candidate.get("section")
+    data = candidate.get("data")
+    interpretation = candidate.get("interpretation", "")
+    claims = candidate.get("claims")
+    evidence = candidate.get("evidence", [])
+    if not all(isinstance(value, str) for value in (section, data, interpretation)):
+        return None, "missing required insight text fields"
+    if not isinstance(claims, list) or not claims:
+        return None, "insight has no structured numeric claims"
+    if not isinstance(evidence, list):
+        return None, "evidence must be a list"
+
+    validated_sources: List[InsightSource] = []
+    claim_numbers: List[Tuple[float, int]] = []
+    combined_text = f"{data.strip()}\n{interpretation.strip()}"
+    for claim in claims:
+        if not isinstance(claim, dict):
+            return None, "claim is not an object"
+        source_id = claim.get("source_id")
+        claim_value = claim.get("value")
+        claim_text = claim.get("claim_text")
+        if not isinstance(source_id, str) or source_id not in source_index:
+            return None, "claim references an unknown source"
+        if not isinstance(claim_text, str) or not claim_text.strip():
+            return None, "claim has no linked text"
+        text_numbers = _numeric_mentions(claim_text)
+        if len(text_numbers) != 1 or _normalise_text(claim_text) not in _normalise_text(combined_text):
+            return None, "claim text does not identify one number in the insight"
+        if isinstance(claim_value, bool) or not isinstance(claim_value, (int, float, str)):
+            return None, "claim value is not numeric"
+        try:
+            numeric_value = float(claim_value)
+        except ValueError:
+            return None, "claim value is not numeric"
+        if not math.isfinite(numeric_value):
+            return None, "claim value is not finite"
+        source = source_index[source_id]
+        if abs(numeric_value - source["value"]) > _number_tolerance(claim_value):
+            return None, "claim value does not match its source"
+        claim_number, claim_precision = text_numbers[0]
+        if abs(claim_number - source["value"]) > 0.5 * (10 ** -claim_precision):
+            return None, "linked number does not match the cited source"
+        claim_numbers.append((claim_number, claim_precision))
+        validated_sources.append(
+            InsightSource(
+                **source,
+                claim_text=claim_text,
+                verified=True,
+            )
+        )
+
+    validated_evidence: List[InsightEvidence] = []
+    for item in evidence:
+        if not isinstance(item, dict):
+            return None, "evidence item is not an object"
+        page = item.get("page")
+        quote = item.get("quote")
+        if isinstance(page, bool) or not isinstance(page, int) or not isinstance(quote, str):
+            return None, "evidence item has invalid page or quote"
+        page_text = pdf_pages.get(page)
+        if not page_text or _normalise_text(quote) not in _normalise_text(page_text):
+            return None, "evidence quote does not match the cited PDF page"
+        validated_evidence.append(InsightEvidence(page=page, quote=quote))
+
+    data_text = data.strip()
+    interpretation_text = interpretation.strip()
+    mentions = _numeric_mentions(data_text, interpretation_text)
+    if not mentions:
+        return None, "insight contains no verifiable numeric claims"
+    for mention, precision in mentions:
+        tolerance = 0.5 * (10 ** -precision)
+        matching = any(
+            abs(mention - claim_number) <= max(tolerance, 0.5 * (10 ** -claim_precision))
+            for claim_number, claim_precision in claim_numbers
+        )
+        if not matching:
+            return None, "insight contains a number with no linked structured claim"
+
+    for text in (data_text, interpretation_text):
+        for sentence in re.split(r"(?<=[.!?])\s+", text):
+            if not _CAUSAL_RE.search(sentence):
+                continue
+            sentence_normalised = _normalise_text(sentence)
+            if not any(
+                sentence_normalised in _normalise_text(pdf_pages[item.page])
+                for item in validated_evidence
+            ):
+                return None, "causal statement is not quoted verbatim from supplied PDF evidence"
+
+    confidence = len(validated_sources) / len(claims)
+    combined = "\n".join(
+        part for part in (f"Data: {data_text}", f"Interpretation: {interpretation_text}" if interpretation_text else "")
+    )
+    return AIInsight(
+        section=section.strip(),
+        insight=combined,
+        data=data_text,
+        interpretation=interpretation_text or None,
+        confidence=confidence,
+        verified_claims=len(validated_sources),
+        total_claims=len(claims),
+        sources=validated_sources,
+        evidence=validated_evidence,
+    ), ""
+
+
+def _stored_insight(row: Insight) -> Optional[AIInsight]:
+    try:
+        content = json.loads(row.text)
+        sources = json.loads(row.sources_json or "{}")
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(content, dict) or not isinstance(sources, dict) or sources.get("version") != 1:
+        return None
+    claims = sources.get("claims", [])
+    evidence = sources.get("evidence", [])
+    if not claims:
+        return None
+    try:
+        return AIInsight(
+            section=row.section,
+            insight=f"Data: {content['data']}\nInterpretation: {content.get('interpretation') or ''}".strip(),
+            data=content["data"],
+            interpretation=content.get("interpretation"),
+            confidence=float(row.confidence or 0),
+            verified_claims=len(claims),
+            total_claims=len(claims),
+            sources=claims,
+            evidence=evidence,
+        )
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
+async def _load_persisted_insights(db: AsyncSession, period_id: int) -> List[AIInsight]:
+    result = await db.execute(
+        select(Insight).where(Insight.period_id == period_id).order_by(Insight.created_at)
+    )
+    return [
+        parsed
+        for row in result.scalars().all()
+        if (parsed := _stored_insight(row)) is not None
+    ]
+
+
+def _period_is_eligible(period: Period, document: Optional[Document]) -> bool:
+    if document and document.status == "published":
+        return True
+    items = period.pnl_items + period.bs_items + period.cf_items
+    if items and all(item.review_status in {"confirmed", "corrected"} for item in items):
+        return True
+    metadata = period.doc_meta or {}
+    return (
+        period.label == "FY2025"
+        and period.source_doc_id is None
+        and metadata.get("document_title")
+        == "FY2025 partial data (assignment brief and HY2026 cash flow)"
+        and bool(metadata.get("source_description"))
+    )
+
+
+async def generate_insights(period_label: str, db: AsyncSession) -> List[AIInsight]:
+    """Generate only deterministic-verified, source-linked insights."""
     result = await db.execute(
         select(Period)
         .options(
@@ -47,159 +411,146 @@ async def generate_insights(period_label: str, db: AsyncSession) -> List[AIInsig
     )
     period = result.scalar_one_or_none()
     if not period:
-        return [AIInsight(section="Error", insight=f"Period {period_label} not found", confidence=0.0)]
+        return [AIInsight(section="Error", insight=f"Period {period_label} not found")]
 
-    pnl = {item.line_item: float(item.value_eur) for item in period.pnl_items}
-    bs = {item.line_item: float(item.value_eur) for item in period.bs_items}
-    cf = {item.line_item: float(item.value_eur) for item in period.cf_items}
-    kpis = {k.metric: float(k.value) for k in period.kpis if k.value is not None}
+    document = await db.get(Document, period.source_doc_id) if period.source_doc_id else None
+    if not _period_is_eligible(period, document):
+        return [AIInsight(
+            section="Unavailable",
+            insight="Insights are available only for published periods or periods with all figures confirmed or corrected.",
+        )]
 
-    cash = kpis.get("cash")
-    if cash is None:
-        cash = bs.get("Cash and cash equivalents")
-    if cash is None:
-        cash = bs.get("Cash and bank balances")
-    short_creditors = bs.get("Creditors < 1yr")
-    long_creditors = bs.get("Creditors > 1yr")
-    total_creditors = (
-        abs(short_creditors) + abs(long_creditors)
-        if short_creditors is not None and long_creditors is not None
-        else None
-    )
-    contingent = bs.get("Contingent consideration")
-    equity = bs.get("Equity")
-    if equity is None:
-        equity = bs.get("Net Assets")
-    goodwill = bs.get("Goodwill")
-    development_costs = bs.get("Development Costs")
-    intangibles = (
-        goodwill + development_costs
-        if goodwill is not None and development_costs is not None
-        else None
-    )
-    dscr_kpi = next((kpi for kpi in period.kpis if kpi.metric == "dscr"), None)
-    dscr_note = (
-        f"n/d ({dscr_kpi.note})"
-        if dscr_kpi is not None and dscr_kpi.value is None and dscr_kpi.note
-        else "n/d"
-    )
+    existing = await _load_persisted_insights(db, period.id)
+    if not client:
+        return existing or [AIInsight(
+            section="Configuration",
+            insight="Groq API key not configured. Set GROQ_API_KEY environment variable.",
+        )]
+
+    source_index = _source_index(period)
+    pdf_pages: Dict[int, str] = {}
+    if document and document.stored_path:
+        path = Path(document.stored_path)
+        if path.is_file():
+            from app.services.ingest import read_pages
+
+            pdf_pages = {
+                page: text[:4000]
+                for page, text in await asyncio.to_thread(read_pages, str(path))
+                if text.strip()
+            }
+        else:
+            logger.warning("Insight source PDF is missing for document id %s", document.id)
+
+    source_pages = sorted({page for source in source_index.values() for page in source["pages"]})
+    keyword_pages = [
+        page
+        for page, text in pdf_pages.items()
+        if re.search(r"\b(revenue|turnover|profit|loss|cash|expense|cost|creditor|customer|contract|acquisition)\b", text, re.IGNORECASE)
+    ]
+    selected_pages = sorted(set(source_pages + keyword_pages))[:16]
+    supplied_pages = {page: pdf_pages[page] for page in selected_pages if page in pdf_pages}
     period_months = period_duration_months(period.start_date, period.end_date)
+    facts = [
+        source
+        for source in source_index.values()
+        if source["value"] is not None
+    ]
+    prompt = f"""Analyze the published or confirmed financial period {period.label} ({period_months} months).
 
-    prompt = f"""You are a CFO-grade financial analyst. Analyze Senus PLC's {period_label} financials and provide 3-5 concise, actionable insights for the Board.
+Available financial facts:
+{json.dumps(facts, ensure_ascii=False)}
 
-FINANCIAL DATA ({period_label}):
-P&L:
-- Revenue: {_format_money(pnl.get('Revenue', pnl.get('Turnover')))}
-- Cost of Sales: {_format_money(pnl.get('Cost of sales'))}
-- Gross Profit: {_format_money(pnl.get('Gross Profit'))}
-- Admin Expenses: {_format_money(pnl.get('Administrative expenses'))}
-- Operating Loss: {_format_money(pnl.get('Group operating loss', pnl.get('Operating loss')))}
-- Loss Before Taxation: {_format_money(pnl.get('Loss before taxation'))}
-- Loss for the Period: {_format_money(pnl.get('Loss for the period'))}
+PDF excerpts from this period (page numbers are source citations):
+{json.dumps([{"page": page, "text": text} for page, text in supplied_pages.items()], ensure_ascii=False)}
 
-Balance Sheet:
-- Cash: {_format_money(cash)}
-- Total Creditors (short + long term): {_format_money(total_creditors)}
-- Contingent Consideration: {_format_money(abs(contingent) if contingent is not None else None)}
-- Net Current Assets: {_format_money(bs.get('Net Current Assets'))}
-- Equity / Net Assets: {_format_money(equity)}
-- Goodwill + Development Costs: {_format_money(intangibles)}
+Return a JSON object with an "insights" array of 3-5 concise items. Each item must have:
+- "section": short topic
+- "data": factual statement using only available financial facts
+- "interpretation": a cautious interpretation, or an empty string
+- "claims": one object per numeric claim in the text, each {{"claim_text": exact numeric text copied from data or interpretation, "source_id": exact available-fact source_id, "value": numeric value}}
+- "evidence": optional exact PDF quotations as [{{"page": page_number, "quote": exact quote}}]
 
-KPIs:
-- Gross Margin: {_format_kpi(kpis.get('gross_margin'), 1, '%')}
-- EBITDA Margin: {_format_kpi(kpis.get('ebitda_margin'), 1, '%')}
-- Net Margin: {_format_kpi(kpis.get('net_margin'), 1, '%')}
-- Cash Runway: {_format_kpi(kpis.get('runway_months'), 1, ' months')}
-- Current Ratio: {_format_kpi(kpis.get('current_ratio'), 2, 'x')} (ex-contingent {_format_kpi(kpis.get('current_ratio_ex_contingent'), 2, 'x')})
-- Equity Ratio: {_format_kpi(kpis.get('equity_ratio'), 1, '%')}
-- Intangibles / Total Assets: {_format_kpi(kpis.get('intangibles_ratio'), 1, '%')}
-- ROE: {_format_kpi(kpis.get('roe'), 1, '%')}
-- ROCE: {_format_kpi(kpis.get('roce'), 1, '%')}
-- DSCR: {_format_kpi(kpis.get('dscr'), 2, 'x') if kpis.get('dscr') is not None else dscr_note}
-
-CONTEXT: You are analyzing financials for period {period_label} ({period_months} months).
-Do not reference events from other periods unless they are explicitly documented for {period_label}.
-Do not state long-term targets (e.g. CAGR) unless explicitly stated in the data for {period_label}.
-
-STRICT RULES:
-- Use ONLY the figures and facts in FINANCIAL DATA and CONTEXT above. Never invent events, causes, costs, contracts or forecasts.
-- Every numeric claim must match a figure above; do not restate a figure as text without the number.
-- Do not claim new contracts, partnerships or funding unless explicitly named above.
-- If something material is missing (e.g. no prior-year comparator), say so instead of estimating.
-- This is a {period_months}-month period ({period_label}); do not conflate with full-year or other periods.
-- Do not contradict computed KPIs (e.g. if DSCR is marked "n/d", never state a DSCR value or imply positive debt service coverage).
-- Prefer descriptive statements over speculative recommendations; do not invent causes/costs.
-
-Return JSON array of insights with: section, insight, confidence (0-1). Focus on: revenue quality, cost discipline, cash runway, strategic milestones, risks.
-
-Only use the percentages and ratios listed above. Do not introduce any other calculated ratio or percentage, and do not invent figures."""
-
-    import asyncio
+Rules:
+- Every numeric value in data or interpretation must match a cited claim's source and value. Do not write numbers as words.
+- Cite only source IDs listed in Available financial facts. Never use unavailable facts or infer missing values.
+- Do not say why a metric changed, or attribute a cause, unless the entire causal sentence is quoted verbatim from a supplied PDF excerpt and cited in evidence.
+- Distinguish reported facts from interpretation. Do not claim that the company has a contract, customer, cause, forecast, target, or event unless explicitly supported by these facts or quoted PDF evidence.
+- Do not use confidence scores. Do not add claims about other periods."""
 
     try:
         response = None
-        last_error: Exception | None = None
+        last_error: Optional[Exception] = None
         for attempt in range(3):
             try:
                 response = await client.chat.completions.create(
                     model=settings.GROQ_MODEL,
                     messages=[{"role": "user", "content": prompt}],
                     temperature=0.1,
-                    max_tokens=800,
+                    max_tokens=1200,
                     response_format={"type": "json_object"},
                 )
                 break
-            except Exception as exc:  # transient rate limits / network blips
+            except Exception as exc:
                 last_error = exc
                 await asyncio.sleep(1.5 * (attempt + 1))
         if response is None:
-            raise last_error if last_error else RuntimeError("No response from model")
+            raise last_error or RuntimeError("No response from AI provider")
+        payload = json.loads(response.choices[0].message.content or "{}")
+    except (json.JSONDecodeError, TypeError, ValueError) as exc:
+        logger.exception("Could not parse insight response for period %s", period.label)
+        return existing or [AIInsight(section="AI Error", insight=f"Failed to parse AI response: {exc}")]
+    except Exception as exc:
+        logger.exception("Insight generation failed for period %s", period.label)
+        return existing or [AIInsight(section="AI Error", insight=f"Failed to generate insights: {exc}")]
 
-        import json
-        data = json.loads(response.choices[0].message.content)
+    candidates = payload.get("insights") if isinstance(payload, dict) else None
+    if not isinstance(candidates, list):
+        logger.warning("AI response has no insights list for period %s", period.label)
+        return existing or [AIInsight(section="AI Error", insight="AI response did not contain an insights list.")]
 
-        if isinstance(data, dict):
-            wrapper = next(
-                (data[k] for k in ("insights", "sections", "analysis", "items")
-                 if k in data and isinstance(data[k], (list, dict))),
-                None,
+    accepted: List[AIInsight] = []
+    persisted: List[Insight] = []
+    for candidate in candidates:
+        if not isinstance(candidate, dict):
+            logger.warning("Discarding malformed insight for period %s", period.label)
+            continue
+        insight, reason = _validate_candidate(candidate, source_index, supplied_pages)
+        if insight is None:
+            logger.warning(
+                "Discarding unverifiable insight for period %s (%s)",
+                period.label,
+                reason,
             )
-            if wrapper is not None:
-                items = wrapper
-            elif any(k in data for k in ("section", "insight", "confidence", "title", "analysis")):
-                items = [data]
-            else:
-                items = list(data.items())
-        else:
-            items = data
-        if isinstance(items, dict):
-            items = list(items.items())
+            continue
+        accepted.append(insight)
+        persisted.append(
+            Insight(
+                period_id=period.id,
+                section=insight.section,
+                text=json.dumps(
+                    {"data": insight.data, "interpretation": insight.interpretation},
+                    ensure_ascii=False,
+                ),
+                confidence=insight.confidence,
+                sources_json=json.dumps(
+                    {
+                        "version": 1,
+                        "claims": [source.model_dump() for source in insight.sources],
+                        "evidence": [item.model_dump() for item in insight.evidence],
+                    },
+                    ensure_ascii=False,
+                ),
+            )
+        )
 
-        insights: List[AIInsight] = []
-        if isinstance(items, list):
-            for item in items:
-                if isinstance(item, dict):
-                    insights.append(AIInsight(
-                        section=str(item.get("section", item.get("title", "Insight"))),
-                        insight=str(item.get("insight", item.get("analysis", item.get("detail", "")))),
-                        confidence=float(item.get("confidence", 0.8) or 0.8),
-                    ))
-                elif isinstance(item, (list, tuple)) and len(item) == 2:
-                    section, text = item
-                    if isinstance(text, dict):
-                        insights.append(AIInsight(
-                            section=str(section),
-                            insight=str(text.get("insight", text.get("analysis", ""))),
-                            confidence=float(text.get("confidence", 0.8) or 0.8),
-                        ))
-                    else:
-                        insights.append(AIInsight(section=str(section), insight=str(text), confidence=0.8))
-                elif isinstance(item, str):
-                    insights.append(AIInsight(section="Insight", insight=item, confidence=0.8))
-
-        return insights or [AIInsight(section="AI", insight="No insights returned.", confidence=0.0)]
-    except Exception as e:
-        return [AIInsight(section="AI Error", insight=f"Failed to generate insights: {str(e)}", confidence=0.0)]
+    await db.execute(delete(Insight).where(Insight.period_id == period.id))
+    db.add_all(persisted)
+    await db.commit()
+    return accepted or [AIInsight(
+        section="No verified insights",
+        insight="The generated insights did not pass deterministic source and number checks.",
+    )]
 
 
 async def compare_periods(request: PeriodCompareRequest, db: AsyncSession) -> PeriodCompareResponse:

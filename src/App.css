@@ -984,19 +984,31 @@
   color: var(--senus-primary);
 }
 
-.insight-card__meter {
-  height: 0.25rem;
-  background: var(--senus-border);
-  border-radius: 0.25rem;
-  overflow: hidden;
-  margin-top: auto;
+.insight-card__statement strong {
+  color: var(--senus-green);
 }
 
-.insight-card__meter span {
-  display: block;
-  height: 100%;
-  background: var(--senus-teal);
-  border-radius: 0.25rem;
+.insight-card__sources {
+  display: grid;
+  gap: 0.5rem;
+  margin: 0;
+  padding: 0.75rem 0 0;
+  border-top: 1px solid var(--senus-border);
+  list-style: none;
+}
+
+.insight-card__sources li {
+  display: grid;
+  gap: 0.125rem;
+  color: var(--senus-text-muted);
+  font-size: 0.75rem;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.insight-card__sources small {
+  color: var(--senus-text-muted);
+  font-size: 0.688rem;
 }
 
 /* ===== States ===== */

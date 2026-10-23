@@ -97,10 +97,33 @@ class FinancialSummary(BaseModel):
     revenue_yoy_period_label: Optional[str] = None
 
 
+class InsightSource(BaseModel):
+    source_id: str
+    claim_text: str
+    label: str
+    value: float
+    origin: str
+    formula: Optional[str] = None
+    pages: List[int] = Field(default_factory=list)
+    source_note: Optional[str] = None
+    verified: bool = True
+
+
+class InsightEvidence(BaseModel):
+    page: int
+    quote: str
+
+
 class AIInsight(BaseModel):
     section: str
     insight: str
-    confidence: float
+    data: Optional[str] = None
+    interpretation: Optional[str] = None
+    confidence: float = 0.0
+    verified_claims: int = 0
+    total_claims: int = 0
+    sources: List[InsightSource] = Field(default_factory=list)
+    evidence: List[InsightEvidence] = Field(default_factory=list)
 
 
 class ChatMessage(BaseModel):

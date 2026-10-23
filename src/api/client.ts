@@ -127,7 +127,30 @@ export interface FinancialSummary {
 export interface AIInsight {
   section: string
   insight: string
+  data: string | null
+  interpretation: string | null
   confidence: number
+  verified_claims: number
+  total_claims: number
+  sources: InsightSource[]
+  evidence: InsightEvidence[]
+}
+
+export interface InsightSource {
+  source_id: string
+  claim_text: string
+  label: string
+  value: number
+  origin: string
+  formula: string | null
+  pages: number[]
+  source_note: string | null
+  verified: boolean
+}
+
+export interface InsightEvidence {
+  page: number
+  quote: string
 }
 
 export interface ReconciledItem {
