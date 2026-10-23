@@ -234,7 +234,7 @@ def _source_index(period: Period) -> Dict[str, Dict[str, Any]]:
 def _validate_candidate(
     candidate: Dict[str, Any],
     source_index: Dict[str, Dict[str, Any]],
-    pdf_pages: Dict[int, str],
+    pdf_pages: Dict[Any, str],
 ) -> Tuple[Optional[AIInsight], str]:
     section = candidate.get("section")
     data = candidate.get("data")
@@ -293,12 +293,21 @@ def _validate_candidate(
             return None, "evidence item is not an object"
         page = item.get("page")
         quote = item.get("quote")
-        if isinstance(page, bool) or not isinstance(page, int) or not isinstance(quote, str):
+        evidence_period = item.get("period_label")
+        if (
+            isinstance(page, bool)
+            or not isinstance(page, int)
+            or not isinstance(quote, str)
+            or (evidence_period is not None and not isinstance(evidence_period, str))
+        ):
             return None, "evidence item has invalid page or quote"
-        page_text = pdf_pages.get(page)
+        page_key = f"{evidence_period}:{page}" if evidence_period else page
+        page_text = pdf_pages.get(page_key)
         if not page_text or _normalise_text(quote) not in _normalise_text(page_text):
             return None, "evidence quote does not match the cited PDF page"
-        validated_evidence.append(InsightEvidence(page=page, quote=quote))
+        validated_evidence.append(
+            InsightEvidence(page=page, quote=quote, period_label=evidence_period)
+        )
 
     data_text = data.strip()
     interpretation_text = interpretation.strip()
@@ -544,7 +553,12 @@ Rules:
             )
         )
 
-    await db.execute(delete(Insight).where(Insight.period_id == period.id))
+    await db.execute(
+        delete(Insight).where(
+            Insight.period_id == period.id,
+            ~Insight.section.like("Period comparison:%"),
+        )
+    )
     db.add_all(persisted)
     await db.commit()
     return accepted or [AIInsight(
@@ -553,8 +567,42 @@ Rules:
     )]
 
 
+def _comparison_source_index(periods: List[Period]) -> Dict[str, Dict[str, Any]]:
+    sources: Dict[str, Dict[str, Any]] = {}
+    for period in periods:
+        for source_id, source in _source_index(period).items():
+            comparison_id = f"{period.label}:{source_id}"
+            sources[comparison_id] = {
+                **source,
+                "source_id": comparison_id,
+                "period_label": period.label,
+            }
+    return sources
+
+
+async def _comparison_pdf_pages(
+    period: Period, document: Optional[Document]
+) -> Dict[str, str]:
+    if not document or not document.stored_path:
+        return {}
+    path = Path(document.stored_path)
+    if not path.is_file():
+        logger.warning(
+            "Comparison source PDF is missing for document id %s", document.id
+        )
+        return {}
+
+    from app.services.ingest import read_pages
+
+    return {
+        f"{period.label}:{page}": text[:4000]
+        for page, text in await asyncio.to_thread(read_pages, str(path))
+        if text.strip()
+    }
+
+
 async def compare_periods(request: PeriodCompareRequest, db: AsyncSession) -> PeriodCompareResponse:
-    """Compare two periods using AI analysis."""
+    """Generate and persist a source-verified comparison of two periods."""
     result_a = await db.execute(
         select(Period)
         .options(
@@ -567,12 +615,7 @@ async def compare_periods(request: PeriodCompareRequest, db: AsyncSession) -> Pe
     )
     period_a = result_a.scalar_one_or_none()
     if not period_a:
-        return PeriodCompareResponse(
-            label_a=request.period_label_a,
-            label_b=request.period_label_b,
-            insight=f"Period '{request.period_label_a}' not found.",
-            confidence=0.0,
-        )
+        raise HTTPException(status_code=404, detail=f"Period '{request.period_label_a}' not found.")
 
     result_b = await db.execute(
         select(Period)
@@ -586,12 +629,7 @@ async def compare_periods(request: PeriodCompareRequest, db: AsyncSession) -> Pe
     )
     period_b = result_b.scalar_one_or_none()
     if not period_b:
-        return PeriodCompareResponse(
-            label_a=request.period_label_a,
-            label_b=request.period_label_b,
-            insight=f"Period '{request.period_label_b}' not found.",
-            confidence=0.0,
-        )
+        raise HTTPException(status_code=404, detail=f"Period '{request.period_label_b}' not found.")
 
     try:
         require_same_period_duration(
@@ -606,72 +644,75 @@ async def compare_periods(request: PeriodCompareRequest, db: AsyncSession) -> Pe
             detail=str(exc),
         ) from exc
 
-    if not client:
-        return PeriodCompareResponse(
-            label_a=request.period_label_a,
-            label_b=request.period_label_b,
-            insight="Groq API key not configured. Set GROQ_API_KEY environment variable.",
-            confidence=0.0,
+    if period_a.id == period_b.id:
+        raise HTTPException(status_code=422, detail="Select two different periods to compare.")
+
+    document_a = await db.get(Document, period_a.source_doc_id) if period_a.source_doc_id else None
+    document_b = await db.get(Document, period_b.source_doc_id) if period_b.source_doc_id else None
+    if not _period_is_eligible(period_a, document_a) or not _period_is_eligible(period_b, document_b):
+        raise HTTPException(
+            status_code=409,
+            detail="Comparisons are available only for published periods or periods with all figures confirmed or corrected.",
         )
 
-    p_a = {item.line_item: float(item.value_eur) for item in period_a.pnl_items}
-    b_a = {item.line_item: float(item.value_eur) for item in period_a.bs_items}
+    if not client:
+        raise HTTPException(
+            status_code=503,
+            detail="Groq API key is not configured; a verified AI comparison cannot be generated.",
+        )
 
-    p_b = {item.line_item: float(item.value_eur) for item in period_b.pnl_items}
-    b_b = {item.line_item: float(item.value_eur) for item in period_b.bs_items}
+    source_index = _comparison_source_index([period_a, period_b])
+    pdf_pages = {
+        **await _comparison_pdf_pages(period_a, document_a),
+        **await _comparison_pdf_pages(period_b, document_b),
+    }
+    source_facts = list(source_index.values())
+    source_pages = {
+        f"{source['period_label']}:{page}"
+        for source in source_facts
+        for page in source["pages"]
+    }
+    keyword_pages = {
+        page
+        for page, text in pdf_pages.items()
+        if re.search(
+            r"\b(revenue|turnover|profit|loss|cash|expense|cost|creditor|customer|contract|acquisition)\b",
+            text,
+            re.IGNORECASE,
+        )
+    }
+    supplied_keys = sorted(source_pages | keyword_pages)[:32]
+    supplied_pages = {key: pdf_pages[key] for key in supplied_keys if key in pdf_pages}
+    excerpts = [
+        {
+            "period_label": key.rsplit(":", 1)[0],
+            "page": int(key.rsplit(":", 1)[1]),
+            "text": text,
+        }
+        for key, text in supplied_pages.items()
+    ]
+    prompt = f"""Compare these two published or confirmed financial periods for Senus PLC.
 
-    creditors_a = (
-        abs(b_a["Creditors < 1yr"]) + abs(b_a["Creditors > 1yr"])
-        if "Creditors < 1yr" in b_a and "Creditors > 1yr" in b_a
-        else None
-    )
-    creditors_b = (
-        abs(b_b["Creditors < 1yr"]) + abs(b_b["Creditors > 1yr"])
-        if "Creditors < 1yr" in b_b and "Creditors > 1yr" in b_b
-        else None
-    )
+Available source facts:
+{json.dumps(source_facts, ensure_ascii=False)}
 
-    prompt = f"""You are a CFO-grade financial analyst comparing two periods for Senus PLC.
+PDF excerpts (each page is identified by period_label and page):
+{json.dumps(excerpts, ensure_ascii=False)}
 
-PERIOD A: {request.period_label_a}
-P&L:
-- Revenue: {_format_money(p_a.get('Revenue', p_a.get('Turnover')))}
-- Cost of Sales: {_format_money(p_a.get('Cost of sales'))}
-- Gross Profit: {_format_money(p_a.get('Gross Profit'))}
-- Admin Expenses: {_format_money(p_a.get('Administrative expenses'))}
-- Operating Loss: {_format_money(p_a.get('Group operating loss', p_a.get('Operating loss')))}
-- Loss for the Period: {_format_money(p_a.get('Loss for the period'))}
+Return one JSON object named "comparison" with:
+- "section": short topic
+- "data": factual comparison using only the available source facts
+- "interpretation": cautious interpretation, or an empty string
+- "claims": one object for each numeric claim, each with "claim_text" (the exact numeric text in data or interpretation), "source_id" (an exact source_id above), and "value" (that source's numeric value)
+- "evidence": optional exact PDF quotations, each with "period_label", "page", and "quote"
 
-Balance Sheet:
-- Cash: {_format_money(b_a.get('Cash and cash equivalents', b_a.get('Cash and bank balances')))}
-- Total Creditors: {_format_money(creditors_a)}
-- Equity / Net Assets: {_format_money(b_a.get('Equity', b_a.get('Net Assets')))}
-
-PERIOD B: {request.period_label_b}
-P&L:
-- Revenue: {_format_money(p_b.get('Revenue', p_b.get('Turnover')))}
-- Cost of Sales: {_format_money(p_b.get('Cost of sales'))}
-- Gross Profit: {_format_money(p_b.get('Gross Profit'))}
-- Admin Expenses: {_format_money(p_b.get('Administrative expenses'))}
-- Operating Loss: {_format_money(p_b.get('Group operating loss', p_b.get('Operating loss')))}
-- Loss for the Period: {_format_money(p_b.get('Loss for the period'))}
-
-Balance Sheet:
-- Cash: {_format_money(b_b.get('Cash and cash equivalents', b_b.get('Cash and bank balances')))}
-- Total Creditors: {_format_money(creditors_b)}
-- Equity / Net Assets: {_format_money(b_b.get('Equity', b_b.get('Net Assets')))}
-
-Write a concise executive summary (2-4 sentences) comparing the two periods. Focus on:
-- Revenue trend and margin change
-- Cost changes (administrative expenses)
-- Operating result trend
-- Cash position change
-- Key risks or positives for the board
-
-Use ONLY the figures above. Return ONLY JSON:
-{{"insight": "your comparison text here", "confidence": 0.95}}"""
-
-    import asyncio
+Rules:
+- Every number in data or interpretation must match a claim's source ID and value.
+- Do not calculate new figures, percentage changes, or deltas. Use only numbers in the supplied source facts.
+- Do not state causes or attribute changes unless the entire causal sentence is quoted verbatim from a supplied PDF excerpt with its period_label and page.
+- Do not introduce facts about another period, forecasts, targets, or unsupported recommendations.
+- Do not return a confidence score.
+"""
 
     try:
         response = None
@@ -682,7 +723,7 @@ Use ONLY the figures above. Return ONLY JSON:
                     model=settings.GROQ_MODEL,
                     messages=[{"role": "user", "content": prompt}],
                     temperature=0.1,
-                    max_tokens=1000,
+                    max_tokens=1200,
                     response_format={"type": "json_object"},
                 )
                 break
@@ -692,21 +733,71 @@ Use ONLY the figures above. Return ONLY JSON:
         if response is None:
             raise last_error if last_error else RuntimeError("No response from model")
 
-        import json
-        data = json.loads(response.choices[0].message.content)
-        insight = data.get("insight", "No insight generated.")
-        confidence = float(data.get("confidence", 0.8) or 0.8)
+        payload = json.loads(response.choices[0].message.content or "{}")
+    except Exception as exc:
+        logger.exception(
+            "AI period comparison failed for %s and %s",
+            period_a.label,
+            period_b.label,
+        )
+        raise HTTPException(status_code=502, detail="AI period comparison failed.") from exc
 
-        return PeriodCompareResponse(
-            label_a=request.period_label_a,
-            label_b=request.period_label_b,
-            insight=insight,
-            confidence=confidence,
+    candidate = payload.get("comparison") if isinstance(payload, dict) else None
+    if not isinstance(candidate, dict):
+        raise HTTPException(status_code=502, detail="AI response did not contain a comparison.")
+    verified, reason = _validate_candidate(candidate, source_index, supplied_pages)
+    if verified is None:
+        logger.warning(
+            "Discarding unverifiable comparison for %s and %s (%s)",
+            period_a.label,
+            period_b.label,
+            reason,
         )
-    except Exception as e:
-        return PeriodCompareResponse(
-            label_a=request.period_label_a,
-            label_b=request.period_label_b,
-            insight=f"Failed to generate comparison: {str(e)}",
-            confidence=0.0,
+        raise HTTPException(
+            status_code=502,
+            detail="AI comparison did not pass deterministic source and number checks.",
         )
+
+    section = f"Period comparison: {period_a.label} vs {period_b.label}"
+    await db.execute(
+        delete(Insight).where(
+            Insight.period_id.in_([period_a.id, period_b.id]),
+            Insight.section == section,
+        )
+    )
+    persisted = [
+        Insight(
+            period_id=period_id,
+            section=section,
+            text=json.dumps(
+                {"data": verified.data, "interpretation": verified.interpretation},
+                ensure_ascii=False,
+            ),
+            confidence=verified.confidence,
+            sources_json=json.dumps(
+                {
+                    "version": 1,
+                    "claims": [source.model_dump() for source in verified.sources],
+                    "evidence": [item.model_dump() for item in verified.evidence],
+                    "period_labels": [period_a.label, period_b.label],
+                },
+                ensure_ascii=False,
+            ),
+        )
+        for period_id in {period_a.id, period_b.id}
+    ]
+    db.add_all(persisted)
+    await db.commit()
+
+    return PeriodCompareResponse(
+        label_a=period_a.label,
+        label_b=period_b.label,
+        insight=verified.insight,
+        confidence=verified.confidence,
+        data=verified.data,
+        interpretation=verified.interpretation,
+        verified_claims=verified.verified_claims,
+        total_claims=verified.total_claims,
+        sources=verified.sources,
+        evidence=verified.evidence,
+    )

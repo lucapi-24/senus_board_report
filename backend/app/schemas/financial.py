@@ -104,6 +104,7 @@ class InsightSource(BaseModel):
     label: str
     value: float
     origin: str
+    period_label: Optional[str] = None
     formula: Optional[str] = None
     pages: List[int] = Field(default_factory=list)
     source_note: Optional[str] = None
@@ -113,6 +114,7 @@ class InsightSource(BaseModel):
 class InsightEvidence(BaseModel):
     page: int
     quote: str
+    period_label: Optional[str] = None
 
 
 class AIInsight(BaseModel):
@@ -165,3 +167,9 @@ class PeriodCompareResponse(BaseModel):
     label_b: str
     insight: str
     confidence: float
+    data: Optional[str] = None
+    interpretation: Optional[str] = None
+    verified_claims: int = 0
+    total_claims: int = 0
+    sources: List[InsightSource] = Field(default_factory=list)
+    evidence: List[InsightEvidence] = Field(default_factory=list)

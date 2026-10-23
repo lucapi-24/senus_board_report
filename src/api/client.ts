@@ -143,6 +143,7 @@ export interface InsightSource {
   label: string
   value: number
   origin: string
+  period_label?: string | null
   formula: string | null
   pages: number[]
   source_note: string | null
@@ -152,6 +153,20 @@ export interface InsightSource {
 export interface InsightEvidence {
   page: number
   quote: string
+  period_label?: string | null
+}
+
+export interface PeriodCompareResult {
+  label_a: string
+  label_b: string
+  insight: string
+  confidence: number
+  data: string | null
+  interpretation: string | null
+  verified_claims: number
+  total_claims: number
+  sources: InsightSource[]
+  evidence: InsightEvidence[]
 }
 
 export interface ReconciledItem {
@@ -286,7 +301,7 @@ export const api = {
   comparePeriods: async (body: {
     period_label_a: string
     period_label_b: string
-  }) => {
+  }): Promise<PeriodCompareResult> => {
     const res = await fetch(`${API_BASE}/api/insights/compare`, {
       method: 'POST',
       headers: { ...authHeaders(), 'Content-Type': 'application/json' },
@@ -296,7 +311,7 @@ export const api = {
       onUnauthorized(res.status)
       throw new Error(await res.text() || 'Compare failed')
     }
-    return res.json()
+    return (await res.json()) as PeriodCompareResult
   },
   documents: () => get<DocumentSummary[]>('/api/documents'),
   document: (id: number) => get<DocumentDetail>(`/api/documents/${id}`),

@@ -30,6 +30,7 @@ import {
   type PeriodDetail,
   type AIInsight,
   type KPIValue,
+  type PeriodCompareResult,
   toNumber,
   formatCompactEur,
   formatPct,
@@ -112,12 +113,7 @@ export function Dashboard({ summary, selected }: DashboardProps) {
   const [detail, setDetail] = useState<PeriodDetail | null>(null)
   const [insights, setInsights] = useState<AIInsight[]>([])
   const [insightsLoading, setInsightsLoading] = useState(false)
-  const [comparison, setComparison] = useState<{
-    label_a: string
-    label_b: string
-    insight: string
-    confidence: number
-  } | null>(null)
+  const [comparison, setComparison] = useState<PeriodCompareResult | null>(null)
   const [comparisonLoading, setComparisonLoading] = useState(false)
   const [compareSelection, setCompareSelection] = useState<{
     label_a: string | null
@@ -161,6 +157,12 @@ export function Dashboard({ summary, selected }: DashboardProps) {
         label_b: compareSelection.label_b,
         insight: 'Comparison failed. Please try again.',
         confidence: 0,
+        data: null,
+        interpretation: null,
+        verified_claims: 0,
+        total_claims: 0,
+        sources: [],
+        evidence: [],
       })
     } finally {
       setComparisonLoading(false)
@@ -987,7 +989,7 @@ export function Dashboard({ summary, selected }: DashboardProps) {
                 <Sparkles size={16} /> AI Comparison
               </span>
               <h2>Compare Periods</h2>
-              <p>Compare two periods side by side with AI commentary.</p>
+              <p>Compare periods with source-linked claims and verified figures.</p>
             </div>
           </div>
 
@@ -1051,8 +1053,43 @@ export function Dashboard({ summary, selected }: DashboardProps) {
                 </div>
               </div>
               <div className="compare__insight">
-                <p>{comparison.insight}</p>
-                <span className="muted small">Confidence: {(comparison.confidence * 100).toFixed(0)}%</span>
+                {comparison.data && (
+                  <p className="insight-card__statement">
+                    <strong>Data</strong> {comparison.data}
+                  </p>
+                )}
+                {comparison.interpretation && (
+                  <p className="insight-card__statement">
+                    <strong>Interpretation</strong> {comparison.interpretation}
+                  </p>
+                )}
+                {!comparison.data && !comparison.interpretation && <p>{comparison.insight}</p>}
+                {comparison.total_claims > 0 && (
+                  <span className="muted small">
+                    {comparison.verified_claims}/{comparison.total_claims} claims verified
+                  </span>
+                )}
+                {comparison.sources.length > 0 && (
+                  <ul className="insight-card__sources" aria-label="Verified comparison sources">
+                    {comparison.sources.map((source, sourceIndex) => (
+                      <li key={`${source.source_id}-${sourceIndex}`}>
+                        <span>
+                          {source.claim_text} → {source.period_label} · {source.label} ({source.origin})
+                          {source.pages.length > 0 && `, PDF p. ${source.pages.join(', ')}`}
+                        </span>
+                        {source.formula && <small>{source.formula}</small>}
+                        {source.source_note && <small>{source.source_note}</small>}
+                      </li>
+                    ))}
+                    {comparison.evidence.map((item, evidenceIndex) => (
+                      <li key={`comparison-evidence-${evidenceIndex}`}>
+                        <span>
+                          {item.period_label && `${item.period_label}, `}PDF p. {item.page}: “{item.quote}”
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
               </div>
             </div>
           )}
