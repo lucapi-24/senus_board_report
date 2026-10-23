@@ -1,388 +1,284 @@
-# Senus PLC — AI-native Board Report
+# Senus PLC Board Report
 
-An AI-native, full-stack platform that prepares a Board Report for **Senus PLC**
-(Natural Capital management software, Euronext Access Dublin). It extracts financial
-information from the company's source documents into a database, models the figures,
-derives board-grade KPIs, and presents them through an interactive, CEO-facing dashboard
-with AI-generated commentary.
+Aplicación web para cargar informes financieros de Senus PLC, detectar y revisar
+periodos y cifras, calcular KPIs deterministas y consultar un dashboard. El flujo
+está pensado para usuarios con rol `admin` (ingesta y revisión) y `viewer` (consulta).
+El repositorio no acredita que exista un despliegue productivo ni cuál sea el estado
+de una base de datos externa.
 
-It was built as the *Technology Graduate Assessment — Board Report* (Assiduous, 2026).
-
----
-
-## Quick start (Docker)
-
-Requires Docker with the Compose plugin.
-
-```bash
-# 1. Create the local environment file (never committed)
-cp backend/.env.example backend/.env
-#    Set GROQ_API_KEY in backend/.env to enable Groq-powered extraction and insights.
-#    The dashboard and deterministic PDF extraction also work without a Groq key.
-
-# 2. Create persistent Docker volumes (safe to run more than once)
-docker volume create senus_plc_board_postgres_data
-docker volume create senus_plc_board_uploads
-
-# 3. Build and run the full stack
-docker compose up --build
-```
-
-| Service   | URL                              | Description                          |
-|-----------|----------------------------------|--------------------------------------|
-| Frontend  | http://localhost:8080            | React dashboard (login → board view) |
-| API       | http://localhost:8000/docs       | FastAPI + OpenAPI docs               |
-| Postgres  | localhost:5432                   | Database (`senus_board`)             |
-
-The API creates the demo accounts on startup. The Compose configuration sets
-`SEED_FROM_DISK=false`, so a fresh database has no reporting periods: upload a PDF
-from the **Documents** tab or change the Compose `SEED_FROM_DISK` override to `true`
-to load the committed
-fixture data into an empty database. Sign in with **board@senus.com / senus123**
-(administrator) or **viewer@senus.com / senus123** (read-only).
-
-PostgreSQL data and uploaded PDFs persist in the external Docker volumes
-`senus_plc_board_postgres_data` and `senus_plc_board_uploads`. Their names are fixed
-so Compose keeps using the same data even if the project is launched from a
-different directory. Compose does not remove external volumes, even with
-`docker compose down -v`; do not manually remove them or run `docker volume prune -a`
-if you want to keep documents and database data.
-
----
-
-## Architecture
+## Arquitectura observada
 
 ```mermaid
 flowchart LR
-    user["Board user / administrator"]
-    browser["Browser<br/>React + TypeScript SPA"]
-    groq["Groq API<br/>optional: GROQ_API_KEY"]
-
-    subgraph compose["Docker Compose"]
-        subgraph frontend["frontend container"]
-            nginx["nginx<br/>serves Vite build<br/>port 80 → host 8080"]
-        end
-
-        subgraph backend["api container"]
-            migrations["Alembic migrations<br/>run before API startup"]
-            api["FastAPI / uvicorn<br/>port 8000"]
-            auth["JWT authentication<br/>viewer / admin checks"]
-            routes["API routes<br/>auth · financial · documents · metrics"]
-            ingest["PDF ingestion services<br/>pdfplumber · period detection"]
-            extract["Deterministic regex extractor<br/>and KPI calculation"]
-            llm["Groq-backed extractor<br/>page grounding"]
-            reconcile["Reconciliation<br/>flagged proposals"]
-            review["Review lifecycle<br/>confirm / correct · validate · publish"]
-            insights["AI insights<br/>and period comparison"]
-            seeder["Startup seeding<br/>demo users + optional fixtures"]
-        end
-
-        db[("PostgreSQL 16<br/>documents · periods · statements · KPIs<br/>users · validations · audit log")]
-        files[("uploads volume<br/>original PDFs")]
-        fixtures["Committed JSON fixtures<br/>backend/scripts/extracted"]
-    end
-
-    user --> browser
-    browser -->|"HTTP: app assets"| nginx
-    browser -->|"API requests: /api/*<br/>Bearer JWT"| nginx
-    nginx -->|"/api/* reverse proxy"| api
-    migrations -->|"schema ready"| api
-    api --> routes
-    routes -->|"login / token verification"| auth
-    auth -->|"authenticated request<br/>and role checks"| routes
-    routes -->|"async SQL"| db
-    routes -->|"upload / download PDF"| files
-    routes --> ingest
-    files -->|"read PDF pages"| ingest
-    ingest --> extract
-    ingest -. "when configured" .-> llm
-    llm -. "structured extraction" .-> groq
-    llm --> reconcile
-    extract --> reconcile
-    reconcile --> review
-    routes -->|"confirm / correct / publish"| review
-    review -->|"store reviewed line items,<br/>KPIs and validations"| db
-    browser -->|"review actions / publish"| routes
-    routes --> insights
-    insights -. "when configured" .-> groq
-    seeder -->|"create demo users"| db
-    fixtures -. "only when SEED_FROM_DISK=true<br/>and no periods exist" .-> seeder
-    compose_note["Compose overrides<br/>SEED_FROM_DISK=false"]
-    compose_note -.-> seeder
+    U[Usuario] --> B[Navegador]
+    B --> FE[React + TypeScript]
+    FE -->|HTTP /api| N[Nginx]
+    N --> API[FastAPI + Uvicorn]
+    API --> ORM[SQLAlchemy async]
+    ORM --> DB[(PostgreSQL)]
+    API --> UP[(Archivos PDF cargados)]
+    API --> PDF[pdfplumber]
+    API -. opcional .-> GROQ[Groq API OpenAI-compatible<br/>openai/gpt-oss-120b]
 ```
 
-Solid arrows show the normal runtime path; dotted arrows are optional or
-configuration-dependent. The frontend container serves the compiled React
-application, while nginx also proxies `/api/*` to FastAPI. Alembic applies schema
-migrations before uvicorn starts. PostgreSQL stores application state; the
-separate Compose `uploads` volume stores source PDFs.
+En Compose hay servicios para PostgreSQL 16, la API y el frontend. El contenedor del
+frontend sirve el build de Vite con Nginx y reenvía `/api/` a FastAPI. Alembic ejecuta
+las migraciones antes de iniciar Uvicorn. Los PDFs cargados se guardan como archivos;
+las entidades financieras y de auditoría se guardan en PostgreSQL
+(`docker-compose.yml`, `Dockerfile`, `backend/Dockerfile`, `nginx.conf`,
+`backend/app/main.py`).
 
-**Document processing:** an administrator uploads a PDF; the API stores it and
-detects candidate periods. The deterministic parser and optional Groq extractor
-work independently; LLM figures are checked against cited page text before
-reconciliation. The resulting proposal is persisted for review. Confirming or
-correcting items recomputes KPIs and validations; publishing advances the
-document/period lifecycle. Uploads, processing, edits, review actions and
-publishing are recorded in `audit_log`.
+| Tecnología | Uso comprobable en el repositorio |
+|---|---|
+| React 19 y TypeScript | SPA, pantallas y contratos del cliente HTTP (`src/`) |
+| Vite | desarrollo y build del frontend (`package.json`, `vite.config.ts`) |
+| Recharts | gráficos del Dashboard (`src/components/Dashboard.tsx`) |
+| FastAPI y Pydantic | API REST, validación de esquemas y documentación OpenAPI (`backend/app/`) |
+| SQLAlchemy async y asyncpg | acceso asíncrono al modelo relacional (`backend/app/core/database.py`) |
+| PostgreSQL | persistencia configurada en Compose (`docker-compose.yml`) |
+| Alembic | migraciones versionadas (`backend/alembic/`) |
+| pdfplumber y expresiones regulares | lectura de texto del PDF y extracción determinista (`backend/app/services/ingest.py`, `backend/scripts/extract_pdf.py`) |
+| Groq, cliente OpenAI-compatible | segundo extractor e insights opcionales; requieren `GROQ_API_KEY` (`backend/app/core/config.py`, `backend/app/services/llm_extract.py`, `backend/app/services/ai_insights.py`) |
+| pytest, Vitest, ESLint | pruebas backend, pruebas frontend y lint (`backend/tests/`, `src/api/client.test.ts`, `package.json`) |
 
-Uploading a PDF automatically processes all detected reporting periods and
-their corresponding table columns. Review proposals are stored separately for
-each period, so switching between periods shows the correct extraction. A line
-item printed in only one column is marked as not reported in the other; an
-administrator can still enter or correct its value during review.
+La tabla describe el uso observado, no la motivación histórica del autor al elegir
+cada tecnología; esa motivación no está documentada en el código.
 
-The dashboard also requests AI insights and period comparisons from the API.
-These features, and the LLM extraction pass, use Groq when `GROQ_API_KEY` is
-configured; without it, deterministic extraction and the core dashboard remain
-available, while AI endpoints report that the key is not configured.
+El modelo configurado por defecto es `openai/gpt-oss-120b`. La URL base es la API
+OpenAI-compatible de Groq. Sin clave, el parser determinista y la aplicación central
+siguen disponibles; no se puede producir una nueva extracción LLM ni generar
+comparaciones o nuevos insights de IA. Los insights verificados ya persistidos pueden
+seguir disponibles (`backend/app/core/config.py`,
+`backend/app/services/llm_extract.py`, `backend/app/services/ai_insights.py`).
 
-For fixture workflows, `backend/scripts/extract_pdf.py` generates extracted JSON
-and `backend/scripts/load_data.py` loads it. On API startup, fixture seeding is
-enabled by default only when the database has no periods; Docker Compose
-explicitly sets `SEED_FROM_DISK=false`.
+## Pantallas y roles
 
----
+- **Login:** autentica mediante `/api/auth/login`; las contraseñas se almacenan con
+  bcrypt y la API devuelve tokens JWT (`src/components/Login.tsx`,
+  `backend/app/api/auth.py`, `backend/app/core/security.py`).
+- **Overview:** muestra KPI, origen/fórmula o nota de disponibilidad, gráficos de
+  ingresos y márgenes, desglose de costes, puente EBITDA–cash flow, ratios, insights
+  y comparación entre periodos (`src/components/Dashboard.tsx`).
+- **Documents:** lista documentos; permite a `admin` cargar PDFs, confirmar fechas,
+  procesar columnas, revisar y corregir cifras, publicar y eliminar documentos.
+  Incluye procedencia y ordenación por confianza de extracción
+  (`src/components/Ingestion.tsx`, `backend/app/api/documents.py`).
+- **Selector de periodo:** está en la cabecera global, no dentro del Dashboard
+  (`src/components/Header.tsx`, `src/App.tsx`).
+- **Permisos:** `viewer` consulta; las operaciones de escritura requieren `admin`
+  en el backend. No hay un selector de audiencia ni permisos por audiencia
+  (`backend/app/core/security.py`, `backend/app/api/`).
 
-## Technologies
+El Dashboard agrupa ratios de rentabilidad, caja/liquidez, solvencia y retornos.
+Incluye Revenue, Gross Margin, Operating Margin, Cash y Cash Runway como tarjetas,
+además de comparativas gráficas y datos de origen. MoM, ingresos por canal y bookings
+se presentan como no disponibles en vez de estimarse (`src/components/Dashboard.tsx`,
+`backend/app/services/metrics.py`).
 
-| Layer      | Choice                                   | Why                                                        |
-|------------|------------------------------------------|------------------------------------------------------------|
-| Frontend   | React 19 + TypeScript + Vite             | Fast DX, typed API contracts, small bundle                 |
-| Charts     | Recharts                                 | Declarative, responsive React charts                       |
-| Styling    | Hand-written CSS with design tokens      | Exact match to senus.com brand, no framework overhead      |
-| Backend    | FastAPI + Pydantic v2                    | Async, typed schemas, auto OpenAPI docs                    |
-| ORM / DB   | SQLAlchemy 2 (async) + asyncpg + Postgres| Typed models, real relational store, async I/O             |
-| AI         | Optional Groq (`openai/gpt-oss-120b`)    | Grounded structured extraction and on-demand commentary   |
-| Extraction | pdfplumber + regex + optional Groq       | Independent extractors, reconciliation and human review   |
-| Serving    | nginx (frontend) + uvicorn (API)         | Standard, containerised                                    |
-| Tooling    | pytest, Vitest, GitHub Actions, Docker   | Tested and reproducible                                    |
+## Modelo de datos
 
----
+Las entidades SQLAlchemy principales y sus relaciones son
+(`backend/app/models/financial.py`):
 
-## Data model
+- `Document` contiene metadatos, ruta del PDF, estado, periodos detectados y payload
+  de revisión. Puede tener varios `Period`.
+- `Period` contiene fechas, etiqueta y documento de origen; agrupa partidas P&L,
+  balance, cash flow, KPIs, insights y validaciones.
+- `PnLItem`, `BalanceSheetItem` y `CashFlowItem` guardan cifras, origen, página,
+  estado de revisión y factores de confianza.
+- `KPI` guarda valor nullable, clase (`reported`, `derived` o `na`), fórmula y nota.
+- `Insight` almacena texto, confianza calculada y JSON con fuentes/evidencia.
+- `Validation` almacena regla, severidad, mensaje, esperado y observado.
+- `User` almacena rol y hash de contraseña; `AuditLog` guarda operaciones y cambios.
 
-| Table                 | Key columns                                              | Purpose                          |
-|-----------------------|----------------------------------------------------------|----------------------------------|
-| `periods`             | `label`, `start_date`, `end_date`, `source_doc_id`       | A reporting period (HY2026, HY2025, FY2025) |
-| `pnl_items`           | `period_id`, `line_item`, `value_eur`                    | Income statement lines           |
-| `balance_sheet_items` | `period_id`, `line_item`, `value_eur`                    | Balance sheet lines              |
-| `cash_flow_items`     | `period_id`, `line_item`, `value_eur`                    | Cash flow lines                  |
-| `kpis`                | `period_id`, `metric`, `value`                           | Computed KPIs                    |
-| `documents`           | `filename`, `period_label`, `status`, `raw_json`         | Uploaded source and review data  |
-| `validations`         | `period_id`, `rule`, `severity`, `message`                | Automated financial checks       |
-| `users` / `audit_log` | Login roles and recorded actions                         | Authentication and audit trail   |
+## Ingesta de PDF y confirmación de periodos
 
-The schema is versioned with **Alembic**. The API container runs `alembic upgrade head`
-before starting, so the database evolves through committed migrations instead of being
-recreated. To add a schema change:
+1. **Carga y lectura:** solo se aceptan archivos `.pdf`. `pdfplumber` extrae texto
+   página a página; en esta ruta no hay OCR (`backend/app/api/documents.py`,
+   `backend/app/services/ingest.py`).
+2. **Detección de fechas y columnas:** `period_detector.py` busca cabeceras de estados
+   financieros y fechas mediante expresiones regulares. La etiqueta se deriva de
+   inicio y fin; por ejemplo, FY2025 corresponde a 1 jul 2024–30 jun 2025 y HY2026
+   a 1 jul 2025–31 dic 2025. El año fiscal termina el 30 de junio. Las cabeceras
+   ambiguas como “Current period” y “Prior period” quedan sin fechas y requieren
+   entrada manual.
+   No se usa un LLM para validar o inventar fechas; el detector y las reglas de
+   coherencia son deterministas (`backend/app/services/period_detector.py`).
+3. **Confirmación antes de extraer cifras:** la UI muestra columnas, fechas y errores.
+   No se procesa hasta confirmar todos los periodos sin errores. La etiqueta se
+   vuelve a calcular al cambiar fechas. Los cambios manuales guardan usuario,
+   fecha/hora y valores anteriores/nuevos en `audit_log`
+   (`backend/app/api/documents.py`, `backend/app/schemas/documents.py`).
+4. **Coherencia temporal:** se comprueba que las columnas detectadas tengan igual
+   duración; si hay dos columnas, que el comparativo esté exactamente 12 meses antes;
+   y que los encabezados detectados de P&L, balance y cash flow coincidan. Si falla,
+   el documento queda sin confirmar y el procesamiento se bloquea
+   (`backend/app/services/period_detector.py`, `backend/app/api/documents.py`).
+5. **Extracción doble:** el parser regex extrae la columna seleccionada y conserva
+   procedencia por página. Si hay `GROQ_API_KEY`, el extractor LLM devuelve partidas
+   estructuradas con página y texto de origen; cada cifra debe aparecer en el texto
+   de la página citada (`backend/scripts/extract_pdf.py`,
+   `backend/app/services/llm_extract.py`).
+6. **Reconciliación y revisión:** cuando ambos extractores discrepan, prevalece el
+   parser determinista; el valor alternativo queda guardado y la partida se marca
+   para revisión. Los valores sin acuerdo no se corrigen silenciosamente.
+   `admin` puede confirmar o corregirlos; publicar actualiza el ciclo de vida del
+   documento (`backend/app/services/reconciliation.py`,
+   `backend/app/services/lifecycle.py`, `backend/app/services/ingest.py`).
+7. **KPIs y validaciones:** tras extraer o corregir, el backend recalcula KPIs y
+   comprobaciones contables con código Python (`backend/app/services/deterministic.py`,
+   `backend/app/services/validation.py`).
 
-```bash
-docker compose run --rm api alembic revision --autogenerate -m "describe change"
-docker compose run --rm api alembic upgrade head
+   La precedencia del parser hace reproducible la selección inicial y deja la salida
+   del LLM como evidencia alternativa para revisión; no implica que el parser sea
+   infalible. Los KPIs se calculan con fórmulas Python para que el resultado no dependa
+   de una respuesta de texto del modelo y pueda cubrirse con tests
+   (`backend/app/services/reconciliation.py`, `backend/scripts/extract_pdf.py`,
+   `backend/tests/test_kpis.py`).
+
+   Si el procesamiento va a sustituir periodos ya existentes, el backend devuelve un
+   conflicto y la UI pide confirmación antes de reintentar. La decisión y los periodos
+   sustituidos quedan en el log de proceso (`backend/app/api/documents.py`,
+   `src/components/Ingestion.tsx`).
+
+La confianza por partida es la media simple de las comprobaciones aplicables:
+coincidencia exacta entre extractores, presencia de la cifra en el texto de la página
+y comprobaciones de identidades contables relacionadas. Si no hay segundo extractor,
+el factor de coincidencia falla; las identidades sin datos suficientes no cuentan.
+La pantalla permite ordenar por las cifras menos fiables
+(`backend/app/services/reconciliation.py`, `src/components/Ingestion.tsx`).
+
+## Datos, orígenes y KPIs
+
+Cada cifra/KPI se clasifica como:
+
+- `reported`: figura reportada en un documento o fuente identificada.
+- `derived`: calculada por el sistema; la fórmula se devuelve como metadato.
+- `n/d` (`na` en el esquema): no disponible, con nota explicativa cuando corresponde.
+
+La ausencia se conserva como `null`; no se sustituye por cero. El catálogo incluye,
+entre otros, márgenes, EBITDA, FCF, burn mensual, runway, ratios de liquidez,
+solvencia, apalancamiento, retornos y DSCR. Algunos ejemplos de fórmulas son
+`Gross profit / Revenue × 100`, `Cash / Monthly burn` y
+`Net cash from operations / (Interest + abs(Loan repayments))`
+(`backend/app/services/metrics.py`, `backend/scripts/extract_pdf.py`).
+
+MoM, ventas por canal y bookings no están disponibles en las fuentes actuales y
+aparecen como `n/d`. DSCR se deja `n/d` si el flujo operativo es negativo. El backend
+rechaza comparaciones de distinta duración con HTTP 422; la serie YoY del resumen
+también exige fechas de inicio con un año de diferencia y duración igual
+(`backend/app/services/metrics.py`, `backend/app/api/financial.py`).
+
+FY2025 es un periodo parcial, no un documento procesado: ingresos **836.991 €** y
+138 cuentas de cliente proceden del enunciado del assignment; la caja inicial
+**140.135 €** procede del cash flow HY2026. No se derivan para FY2025 márgenes,
+EBITDA ni runway, y el resto de partidas está ausente (`backend/scripts/extracted/fy2025_extracted.json`,
+`backend/tests/test_fixtures.py`).
+
+## Validaciones y convenciones
+
+Las comprobaciones deterministas usan tolerancia de **±1 €**. Se omiten si faltan
+entradas requeridas; las identidades de subtotales tratan una partida ausente como
+cero. Las reglas implementadas incluyen:
+
+1. Revenue − Cost of sales = Gross Profit (**error**).
+2. Activos menos pasivos = equity/net assets (**error**).
+3. Resultado operativo + depreciación = EBITDA (**error**).
+4. Cash al inicio + variación neta = cash al cierre (**error**).
+5. Subtotales de balance iguales a la suma de sus componentes (**warning**).
+
+La fuente de HY2025 contiene una discrepancia concreta: en la página 5 del PDF el
+comparativo imprime revenue 340.931 €, cost of sales 69.600 € y Gross Profit
+272.331 €. Sin embargo, `340.931 − 69.600 = 271.331`; la diferencia es 1.000 €,
+superior a la tolerancia. La extracción conserva el subtotal impreso y la regla
+contable lo señala, no lo corrige (`backend/data/Senus_HY2026_Interim_Results.pdf`,
+`backend/tests/test_extract.py`, `backend/app/services/validation.py`).
+
+El parser normaliza a negativo determinadas líneas de pérdidas si aparecen positivas,
+incluyendo operating loss y loss for the period. EBITDA es derivado como resultado
+operativo + depreciación. La dirección de otras partidas sigue el valor parseado del
+documento; no se afirma que todos los costes se normalicen automáticamente
+(`backend/scripts/extract_pdf.py`).
+
+## Insights y comparaciones con IA
+
+Los insights por periodo solo se generan para documentos publicados, partidas
+confirmadas/corregidas, o el registro parcial FY2025 identificado en los fixtures.
+Cada afirmación numérica requiere un claim estructurado ligado a un `source_id`; el
+backend comprueba el valor contra la cifra/KPI fuente y que los números del texto
+correspondan a claims verificados, con tolerancia de redondeo de media unidad de la
+precisión mostrada. Las citas incluyen partida/KPI y página cuando está disponible.
+Las frases causales solo se aceptan si la frase completa coincide con evidencia
+textual de una página del PDF (`backend/app/services/ai_insights.py`).
+
+La confianza no se toma del modelo: es `claims verificados / claims totales`. Los
+insights aceptados y sus fuentes se guardan en `insights` y se presentan en
+Dashboard por separado como dato e interpretación. La comparación narrativa entre
+dos periodos aplica las mismas comprobaciones de elegibilidad, cifras y evidencia,
+persiste sus fuentes y presenta las citas en la UI. El backend rechaza duraciones
+distintas y no acepta una comparación si no supera la verificación
+(`backend/app/services/ai_insights.py`, `backend/app/models/financial.py`,
+`src/components/Dashboard.tsx`).
+
+## Demo y datos reproducibles
+
+Hay fixtures extraídos para HY2026, HY2025 y el FY2025 parcial en
+`backend/scripts/extracted/`. En Compose, `SEED_FROM_DISK=false` evita que el arranque
+cargue periodos automáticamente. El script `backend/scripts/reset_demo.py` borra los
+registros de la base configurada, recrea los usuarios demo y carga esos tres fixtures.
+Es destructivo y exige `--confirm`; antes de usarlo hay que verificar `DATABASE_URL`.
+Los fixtures no restauran los PDFs originales. El reset no se ejecutó contra una base
+de datos durante esta validación.
+
+## Ejecución de pruebas y verificación
+
+Comandos desde la raíz del repositorio:
+
+```powershell
+python -m pytest backend\tests -q
+npm test -- --run
+npm run build
+npm run lint
 ```
 
----
+Resultado observado en este checkout:
 
-## PDF ingestion and AI
+- Backend: **91 passed**, 7 warnings (Pydantic deprecated-config y clave HMAC corta
+  en el test de seguridad).
+- Frontend: **6 passed**.
+- Build TypeScript/Vite: **correcto**; Vite advierte que el chunk JavaScript principal
+  supera 500 kB minificado.
+- Lint: **falla** en `react-hooks/set-state-in-effect` en
+  `src/components/Dashboard.tsx`; además informa dos warnings de dependencias de
+  hooks en `Dashboard.tsx` y `App.tsx`. No se afirma que lint esté limpio.
+- CI (`.github/workflows/ci.yml`) ejecuta pytest, Vitest y build; no ejecuta ESLint.
 
-The Documents view supports uploading PDFs, detecting and confirming reporting
-periods, processing, editing period metadata, reviewing extracted figures, and
-publishing. The runtime pipeline is implemented in `backend/app/services/`:
+Se hizo una comprobación puntual del texto extraído directamente del PDF real,
+página 5, para las tres cifras comparativas de HY2025 señaladas arriba. No se hizo
+una revisión visual independiente de todas las partidas del informe ni una llamada
+de validación en vivo a Groq; los tests del proveedor usan respuestas simuladas.
 
-1. **PDF text and period detection** — `pdfplumber` reads page text; the period detector
-   identifies reporting periods and figure columns for confirmation.
-2. **Independent extraction** — a deterministic regex parser and, when `GROQ_API_KEY`
-   is configured, a Groq-backed structured extractor read the selected column.
-3. **Grounding and reconciliation** — LLM figures must be present on their cited page.
-   The reconciler compares labels and values from both extractors; mismatches and
-   single-source values are flagged with provenance for review.
-4. **Review and publish** — administrators confirm or correct flagged values. The
-   service recomputes derived KPIs and validations before a period is published.
+## Limitaciones conocidas
 
-The offline `backend/scripts/extract_pdf.py` generates fixture data and contains the
-deterministic parser and KPI calculation. At request time, `/api/insights/{period}`
-asks the configured LLM for commentary based on that period's stored figures. Without
-a Groq key, the insights endpoint reports that AI is not configured; the core
-dashboard and deterministic extraction remain available.
+- La ruta PDF extrae texto con `pdfplumber`; no hay OCR para páginas escaneadas.
+- El parser está ajustado a estados tabulares de dos columnas y a las etiquetas y
+  saltos de línea cubiertos por sus patrones/tests; no se verifica soporte general
+  para cualquier diseño de informe.
+- No hay datos mensuales, por canal o bookings en las fuentes incluidas; son `n/d`.
+- FY2025 solo contiene los datos explícitos indicados arriba.
+- El código de Dashboard muestra una referencia de “50% CAGR track” calculada como
+  1,5 × ingresos FY2025; no es un KPI del catálogo ni una cifra calculada a partir
+  de periodos mensuales (`src/components/Dashboard.tsx`).
+- No hay selector de audiencia. Los roles actuales son `admin` y `viewer`.
+- El restablecimiento de demo y el estado de una base externa no se verificaron
+  ejecutando el script contra esa base.
 
-**Why not let the LLM decide the figures?** Financial values must be exact and
-auditable. The LLM acts as an independent comparison source, not an authority:
-page grounding and human review make discrepancies visible instead of silently
-accepting model output.
+## Desarrollo asistido por IA
 
----
+### Herramientas utilizadas
 
-## KPIs & methodology
 
-Computed in `compute_kpis` (`backend/scripts/extract_pdf.py`):
+### Qué pedí a cada herramienta
 
-- **Profitability** — gross / operating / EBITDA / net margin, admin-expense ratio.
-- **Cash & liquidity** — FCF (operating cash flow + capex), monthly burn, cash runway,
-  net cash, current ratio (with and without contingent consideration).
-- **Solvency & leverage** — equity ratio, intangibles ratio, debt-to-equity, interest cover,
-  DSCR (only when cash available for debt service is positive).
-- **Returns** — ROCE (EBIT ÷ capital employed, where capital employed = total assets −
-  current liabilities), annualised ROCE, ROE.
 
-HY2026 (six months to 31 Dec 2025) headline results:
-
-| Metric            | Value                     |
-|-------------------|---------------------------|
-| Revenue           | €354,813                  |
-| Gross margin      | 81.7%                     |
-| Operating margin  | −136.3%                   |
-| EBITDA margin     | −133.5%                   |
-| Cash runway       | 10.5 months               |
-| Current ratio     | 0.75× (2.39× ex-contingent) |
-| ROCE              | −75.9% (sem.) / −151.8% (ann.) |
-| ROE               | −86.5%                    |
-| DSCR              | n/a (negative operating cash flow) |
-
----
-
-## Frontend
-
-Single-page dashboard (state-based auth, no router) with Overview and Documents
-views: period selector, KPI cards, YoY comparison and margin charts, EBITDA→FCF
-bridge, revenue/profit trend, AI insight cards, PDF ingestion, and an administrator
-review/publish workflow. Styled as an extension of senus.com (dark green / teal /
-peach palette, Figtree typography).
-
----
-
-## AI-assisted development workflow
-
-AI tools were used throughout, with the developer reviewing and standing behind every output:
-
-- **Scaffolding & implementation** — AI assisted with component/API scaffolding and SQLAlchemy models.
-- **Frontend developing** — AI built the bases of the frontend, applying changes guided from user.
-- **The product itself uses AI** — Groq supports grounded statement extraction and on-demand insights.
-- **Debugging** — AI helped trace an empty-statements API bug (Pydantic field/ORM attribute
-  name mismatch) and a non-deterministic insights parser.
-- **Reconciliation** — AI generated a reference breakdown used to cross-check extracted
-  figures (see Validation); discrepancies were investigated and resolved manually.
-
-Financial figures are checked against the source; KPI calculations have golden-value tests.
-LLM-extracted values are grounded against page text and reconciled, with flagged items
-left for administrator review.
-
----
-
-## Validation
-
-1. **Source reconciliation** — extracted figures were cross-checked against an independently
-   produced reference breakdown of the same report. Raw line items matched; several KPI
-   formulas were found to be wrong and fixed:
-   - EBITDA was adding depreciation to a *positive* loss (sign error) → now `op. loss + depreciation`.
-   - ROCE used the wrong denominator → now `EBIT ÷ (total assets − current liabilities)`.
-   - Current ratio read a non-existent balance-sheet key → now uses `Total Current Assets`.
-   - DSCR was forced onto negative cash flow → now reported as *not significant*.
-2. **Automated tests** — `backend/tests/` covers parsing, ingestion, reconciliation,
-   lifecycle, validation and KPI golden values; `src/api/client.test.ts` covers API
-   formatters.
-3. **CI** — `.github/workflows/ci.yml` runs pytest on pushes to `main`/`master` and
-   pull requests; the frontend job runs Vitest and the production build.
-
----
-
-## Testing & CI
-
-```bash
-# Backend (in a local Python environment)
-cd backend
-python -m pip install -r requirements.txt -r requirements-dev.txt
-python -m pytest -q
-
-# Frontend
-cd ..
-npm test          # Vitest
-npm run build     # type-check + production build
-```
-
-`.github/workflows/ci.yml` runs the backend suite on pushes to `main`/`master` and on
-pull requests; the frontend job runs Vitest and the production build.
-
----
-
-## Project structure
-
-```
-.
-├── backend/
-│   ├── app/
-│   │   ├── api/financial.py        # REST endpoints
-│   │   ├── api/{auth,documents,metrics}.py
-│   │   ├── core/                   # config, database, auth and seed
-│   │   ├── models/financial.py     # SQLAlchemy tables
-│   │   ├── schemas/                # Pydantic request/response models
-│   │   └── services/               # ingest, extraction, reconciliation, KPIs, AI
-│   ├── scripts/
-│   │   ├── extract_pdf.py          # PDF → structured data + KPIs
-│   │   ├── load_data.py            # JSON → Postgres
-│   │   ├── dump_periods.py         # Postgres → JSON (regenerate fixtures)
-│   │   └── extracted/*.json        # committed extraction output (seed data)
-│   ├── tests/                      # pytest
-│   └── data/                       # source PDFs
-├── src/                            # React frontend
-│   ├── api/client.ts               # typed API client + formatters
-│   └── components/                 # Login, Header, Dashboard, Ingestion, …
-├── Dockerfile / nginx.conf         # frontend image (Vite build → nginx)
-├── docker-compose.yml              # postgres + api + frontend
-└── .github/workflows/ci.yml        # CI
-```
-
----
-
-## Assumptions & data limitations
-
-- **Periods** — HY2026 = six months ended 31 Dec 2025; HY2025 = the comparative six months
-  ended 31 Dec 2024 (both extracted from the same interim report); FY2025 = year ended 30 Jun 2025.
-- **Source quality** — HY2026 and HY2025 are from the primary interim report and are fully
-  mapped. FY2025 is available only as summary data, so it is presented as a full-year *P&L
-  reference* only — its balance sheet and cash flow are intentionally left empty rather than
-  showing unverifiable figures.
-- **Sign convention** — the source presents costs and losses as positive; these are normalised
-  to negative in the database.
-- **EBITDA** — proxy = operating loss + depreciation (no separate EBITDA line in the source).
-- **Contingent consideration** (€850k, Loamin acquisition) is a non-cash liability; liquidity
-  ratios are shown both including and excluding it.
-- **DSCR** is reported as *n/a* because cash available for debt service is negative.
-- **Auth** — JWT authentication and administrator role checks are implemented; seeded
-  demo passwords and the development signing key are not suitable for production.
-
----
-
-## Environment variables
-
-| Variable                     | Default / required                  | Description |
-|------------------------------|-------------------------------------|-------------|
-| `DATABASE_URL`               | Compose sets it                     | PostgreSQL DSN; the app default targets local PostgreSQL. |
-| `GROQ_API_KEY`                | Optional                            | Enables LLM extraction and AI insights. |
-| `GROQ_BASE_URL`               | Groq API URL                        | OpenAI-compatible endpoint used by the Groq client. |
-| `GROQ_MODEL`                  | `openai/gpt-oss-120b`               | Model used for extraction and insights. |
-| `SECRET_KEY`                  | Development-only default            | JWT signing key; set a strong secret outside local development. |
-| `ACCESS_TOKEN_EXPIRE_MINUTES` | `480`                               | JWT lifetime in minutes. |
-| `UPLOAD_DIR`                  | `data/uploads`                      | Directory for uploaded PDFs, relative to the backend app. |
-| `SQL_ECHO`                    | `false`                             | Log SQL statements when enabled. |
-| `SEED_FROM_DISK`              | App: `true`; Compose: `false`       | Load extracted JSON fixtures when the database has no periods. |
-
-## Auth, roles and audit
-
-- Login with demo credentials: **board@senus.com / senus123** (admin, can upload/process/review/publish) or **viewer@senus.com / senus123** (read-only).
-- Protected `/api` routes require a bearer JWT; `/api/auth/login` issues the token. Write operations require the administrator role.
-- Uploads, metadata and period changes, processing, item review, deletion and publishing are recorded in `audit_log` with the user email.
-- The header shows the logged-in user and role, and a badge for flagged items on the
-  latest period.
-
-## Metrics catalogue
-
-`GET /api/metrics/catalog` returns metadata for derived KPIs (label, unit, category,
-direction and formula). Values are computed by `compute_kpis` in
-`backend/scripts/extract_pdf.py`; catalogue metadata is maintained in
-`backend/app/services/metrics.py`.
-
-## AI insights verification
-
-`VERIFICATION_REPORT.md` records the ground-truth comparison and the earlier
-cross-period prompt issue. The period-aware context and guardrails described there
-are present in `backend/app/services/ai_insights.py`.
+### Dónde corregí a la IA
