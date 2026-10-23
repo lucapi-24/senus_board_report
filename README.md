@@ -20,7 +20,11 @@ cp backend/.env.example backend/.env
 #    Set GROQ_API_KEY in backend/.env to enable Groq-powered extraction and insights.
 #    The dashboard and deterministic PDF extraction also work without a Groq key.
 
-# 2. Build and run the full stack
+# 2. Create persistent Docker volumes (safe to run more than once)
+docker volume create senus_plc_board_postgres_data
+docker volume create senus_plc_board_uploads
+
+# 3. Build and run the full stack
 docker compose up --build
 ```
 
@@ -36,6 +40,13 @@ from the **Documents** tab or change the Compose `SEED_FROM_DISK` override to `t
 to load the committed
 fixture data into an empty database. Sign in with **board@senus.com / senus123**
 (administrator) or **viewer@senus.com / senus123** (read-only).
+
+PostgreSQL data and uploaded PDFs persist in the external Docker volumes
+`senus_plc_board_postgres_data` and `senus_plc_board_uploads`. Their names are fixed
+so Compose keeps using the same data even if the project is launched from a
+different directory. Compose does not remove external volumes, even with
+`docker compose down -v`; do not manually remove them or run `docker volume prune -a`
+if you want to keep documents and database data.
 
 ---
 
@@ -114,10 +125,11 @@ correcting items recomputes KPIs and validations; publishing advances the
 document/period lifecycle. Uploads, processing, edits, review actions and
 publishing are recorded in `audit_log`.
 
-In the current UI, **Confirm & Process** saves the confirmed period labels; the
-administrator then starts extraction with **Process**. The process endpoint
-currently iterates the document's detected periods, so the confirmation is not
-yet used to filter which detected periods are processed.
+Uploading a PDF automatically processes all detected reporting periods and
+their corresponding table columns. Review proposals are stored separately for
+each period, so switching between periods shows the correct extraction. A line
+item printed in only one column is marked as not reported in the other; an
+administrator can still enter or correct its value during review.
 
 The dashboard also requests AI insights and period comparisons from the API.
 These features, and the LLM extraction pass, use Groq when `GROQ_API_KEY` is
@@ -243,6 +255,7 @@ peach palette, Figtree typography).
 AI tools were used throughout, with the developer reviewing and standing behind every output:
 
 - **Scaffolding & implementation** — AI assisted with component/API scaffolding and SQLAlchemy models.
+- **Frontend developing** — AI built the bases of the frontend, applying changes guided from user.
 - **The product itself uses AI** — Groq supports grounded statement extraction and on-demand insights.
 - **Debugging** — AI helped trace an empty-statements API bug (Pydantic field/ORM attribute
   name mismatch) and a non-deterministic insights parser.

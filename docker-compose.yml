@@ -54,4 +54,8 @@ services:
 
 volumes:
   postgres_data:
+    external: true
+    name: senus_plc_board_postgres_data
   uploads:
+    external: true
+    name: senus_plc_board_uploads
