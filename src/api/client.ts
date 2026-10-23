@@ -65,6 +65,7 @@ export interface LineItem {
   origin?: string | null
   review_status?: string | null
   confidence?: number | null
+  confidence_factors?: Record<string, boolean | null> | null
   original_value?: number | null
 }
 
@@ -159,6 +160,7 @@ export interface ReconciledItem {
   value: number
   status: string
   confidence: number
+  confidence_factors?: Record<string, boolean | null>
   page: number | null
   origin?: string | null
   source: string

@@ -188,6 +188,19 @@ def validate_period(
     return issues
 
 
+def check_results(
+    pnl: Dict[str, Any],
+    bs: Dict[str, Any],
+    cf: Dict[str, Any],
+    tolerance: float = TOLERANCE,
+) -> Dict[str, bool]:
+    """Return pass/fail for every accounting identity with sufficient inputs."""
+    return {
+        rule: abs(expected - actual) <= tolerance
+        for rule, _severity, expected, actual in _checks(pnl, bs, cf)
+    }
+
+
 def checks_run(pnl: Dict[str, Any], bs: Dict[str, Any], cf: Dict[str, Any]) -> int:
     """Number of rules that had enough data to run (for reporting)."""
     return len(_checks(pnl, bs, cf))

@@ -35,6 +35,8 @@ function merge(
       ...item,
       value: live?.value_eur ?? item.value,
       origin: live?.origin ?? item.origin ?? (item.line_item === 'EBITDA' ? 'derived' : 'reported'),
+      confidence: live?.confidence ?? item.confidence,
+      confidence_factors: live?.confidence_factors ?? item.confidence_factors ?? undefined,
       review_status: live?.review_status,
     }
   })
@@ -47,6 +49,7 @@ function merge(
       origin: item.origin ?? (item.line_item === 'EBITDA' ? 'derived' : 'reported'),
       status: item.review_status === 'reported' ? 'matched' : 'regex_only',
       confidence: item.confidence ?? 0,
+      confidence_factors: item.confidence_factors ?? undefined,
       page: item.page ?? null,
       source: 'database',
       llm_value: item.original_value ?? null,
@@ -70,6 +73,7 @@ export function Ingestion({ role, onDataChanged }: { role?: string; onDataChange
   const [docPeriods, setDocPeriods] = useState<Map<number, Period[]>>(new Map())
   const [busy, setBusy] = useState('')
   const [error, setError] = useState('')
+  const [sortByConfidence, setSortByConfidence] = useState(false)
 
   const [file, setFile] = useState<File | null>(null)
   const [docType, setDocType] = useState('interim_results')
@@ -600,6 +604,14 @@ export function Ingestion({ role, onDataChanged }: { role?: string; onDataChange
                 <div className="review__summary">
                   <span className="pill pill--ok">{review.summary.matched} matched</span>
                   <span className="pill pill--warn">{pending} to review</span>
+                  <button
+                    type="button"
+                    className="btn btn--small"
+                    aria-pressed={sortByConfidence}
+                    onClick={() => setSortByConfidence((current) => !current)}
+                  >
+                    {sortByConfidence ? 'Restore statement order' : 'Least reliable first'}
+                  </button>
                   {isAdmin && (
                     <>
                       <button
@@ -647,6 +659,9 @@ export function Ingestion({ role, onDataChanged }: { role?: string; onDataChange
                     review_status: null,
                   })
                 }
+                const displayed = sortByConfidence
+                  ? [...merged].sort((a, b) => a.confidence - b.confidence)
+                  : merged
                 return (
                   <div key={statement} className="review__group">
                     <h3 className="review__subtitle">{STATEMENT_LABELS[statement] ?? statement}</h3>
@@ -656,13 +671,18 @@ export function Ingestion({ role, onDataChanged }: { role?: string; onDataChange
                           <th>Line item</th>
                           <th className="num">Value</th>
                           <th>Status</th>
-                          <th className="num">Conf.</th>
+                          <th
+                            className="num"
+                            title="Equal-weight average of extractor agreement, page-text match, and applicable accounting identities."
+                          >
+                            Conf.
+                          </th>
                           <th>Page</th>
                           <th />
                         </tr>
                       </thead>
                       <tbody>
-                        {merged.map((item) => {
+                        {displayed.map((item) => {
                           const flagged = item.status !== 'matched' || item.review_status !== 'reported'
                           const other =
                             item.regex_value !== null && item.llm_value !== null
@@ -690,7 +710,16 @@ export function Ingestion({ role, onDataChanged }: { role?: string; onDataChange
                                   {item.review_status ?? item.status}
                                 </span>
                               </td>
-                              <td className="num small">{item.confidence.toFixed(2)}</td>
+                              <td
+                                className="num small"
+                                title={item.confidence_factors
+                                  ? Object.entries(item.confidence_factors)
+                                      .map(([factor, passed]) => `${factor}: ${passed === null ? 'not applicable' : passed ? 'pass' : 'fail'}`)
+                                      .join('; ')
+                                  : 'Evidence breakdown unavailable'}
+                              >
+                                {item.confidence.toFixed(2)}
+                              </td>
                               <td className="small muted">{item.page ?? '—'}</td>
                               <td className="review-table__actions">
                                 {isAdmin && flagged && (

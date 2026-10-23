@@ -28,6 +28,7 @@ class LineItemResponse(BaseModel):
     origin: Optional[str] = None
     review_status: Optional[str] = None
     confidence: Optional[float] = None
+    confidence_factors: Optional[dict[str, Optional[bool]]] = None
     original_value: Optional[float] = None
 
     class Config:

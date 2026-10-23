@@ -13,10 +13,12 @@ Only disagreements and single-source labels are marked for review.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
-from app.services.llm_extract import STATEMENTS, StatementLine, parse_value
+from app.services.llm_extract import STATEMENTS, StatementLine, parse_value, value_candidates
+from app.services.validation import check_results
 
 TOLERANCE = 1.0
 
@@ -153,6 +155,7 @@ class ReconciledItem:
     source: str = "both"  # both | llm | regex
     llm_value: Optional[float] = None
     regex_value: Optional[float] = None
+    confidence_factors: Dict[str, Optional[bool]] = field(default_factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -165,14 +168,74 @@ class ReconciledItem:
             "source": self.source,
             "llm_value": self.llm_value,
             "regex_value": self.regex_value,
+            "confidence_factors": self.confidence_factors,
         }
+
+
+_IDENTITY_RULES: Dict[str, Dict[str, Tuple[str, ...]]] = {
+    "pnl": {
+        "Revenue": ("revenue_minus_cogs_eq_gross_profit",),
+        "Turnover": ("revenue_minus_cogs_eq_gross_profit",),
+        "Cost of sales": ("revenue_minus_cogs_eq_gross_profit",),
+        "Gross Profit": ("revenue_minus_cogs_eq_gross_profit",),
+        "Group operating loss": ("operating_result_plus_depreciation_eq_ebitda",),
+        "Operating loss": ("operating_result_plus_depreciation_eq_ebitda",),
+    },
+    "balance_sheet": {
+        "Goodwill": ("subtotal:Total Fixed Assets",),
+        "Development Costs": ("subtotal:Total Fixed Assets",),
+        "Tangible Assets": ("subtotal:Total Fixed Assets",),
+        "Total Fixed Assets": (
+            "subtotal:Total Fixed Assets",
+            "subtotal:Total Assets Less Current Liabilities",
+            "assets_minus_liabilities_eq_equity",
+        ),
+        "Debtors": ("subtotal:Total Current Assets",),
+        "Cash and cash equivalents": ("subtotal:Total Current Assets",),
+        "Total Current Assets": (
+            "subtotal:Total Current Assets",
+            "subtotal:Net Current Assets",
+            "assets_minus_liabilities_eq_equity",
+        ),
+        "Creditors < 1yr": (
+            "subtotal:Net Current Assets",
+            "assets_minus_liabilities_eq_equity",
+        ),
+        "Contingent consideration": (
+            "subtotal:Net Current Assets",
+            "assets_minus_liabilities_eq_equity",
+        ),
+        "Net Current Assets": (
+            "subtotal:Net Current Assets",
+            "subtotal:Total Assets Less Current Liabilities",
+            "assets_minus_liabilities_eq_equity",
+        ),
+        "Total Assets Less Current Liabilities": (
+            "subtotal:Total Assets Less Current Liabilities",
+            "subtotal:Net Assets",
+            "assets_minus_liabilities_eq_equity",
+        ),
+        "Creditors > 1yr": ("subtotal:Net Assets", "assets_minus_liabilities_eq_equity"),
+        "Net Assets": ("subtotal:Net Assets", "assets_minus_liabilities_eq_equity"),
+        "Equity": ("assets_minus_liabilities_eq_equity",),
+    },
+    "cash_flow": {
+        "Depreciation": ("operating_result_plus_depreciation_eq_ebitda",),
+        "EBITDA": ("operating_result_plus_depreciation_eq_ebitda",),
+        "Cash at start": ("cash_open_plus_net_change_eq_cash_close",),
+        "Net change in cash": ("cash_open_plus_net_change_eq_cash_close",),
+        "Cash at end": ("cash_open_plus_net_change_eq_cash_close",),
+    },
+}
 
 
 def _regex_map(statement: str, deterministic: Dict[str, Any]) -> Dict[str, tuple]:
     out: Dict[str, tuple] = {}
+    provenance = (deterministic.get("provenance") or {}).get(statement, {})
     for label, raw in (deterministic.get(statement, {}) or {}).items():
         canon = canonical_label(statement, label)
-        out[_key(canon)] = (canon, parse_value(raw))
+        page = provenance.get(label) or provenance.get(canon)
+        out[_key(canon)] = (canon, parse_value(raw), page)
     return out
 
 
@@ -189,28 +252,64 @@ def _llm_map(statement: str, llm_lines: Sequence[StatementLine]) -> Dict[str, tu
 def _reconcile_item(
     statement: str, canon: str, regex: tuple | None, llm: tuple | None, tolerance: float
 ) -> ReconciledItem:
-    page = llm[1].page if llm else None
+    llm_page = (llm[1].page or None) if llm else None
+    page = llm_page or (regex[2] if regex else None)
     rv = regex[1] if regex else None
     lv = llm[1].value if llm else None
 
     if regex and llm:
         if rv is not None and lv is not None and abs(rv - lv) <= tolerance:
-            return ReconciledItem(statement, canon, rv, "matched", 0.98, page, "both", lv, rv)
+            return ReconciledItem(statement, canon, rv, "matched", 0.0, page, "both", lv, rv)
         if rv is not None and lv is not None and abs(abs(rv) - abs(lv)) <= tolerance:
-            return ReconciledItem(statement, canon, rv, "sign_mismatch", 0.60, page, "both", lv, rv)
+            return ReconciledItem(statement, canon, rv, "sign_mismatch", 0.0, page, "both", lv, rv)
         return ReconciledItem(statement, canon, rv if rv is not None else lv,
-                              "value_mismatch", 0.20, page, "both", lv, rv)
+                              "value_mismatch", 0.0, page, "both", lv, rv)
     if regex:
-        return ReconciledItem(statement, canon, rv, "regex_only", 0.50, page, "regex", None, rv)
-    return ReconciledItem(statement, canon, lv, "llm_only", 0.50, page, "llm", lv, None)
+        return ReconciledItem(statement, canon, rv, "regex_only", 0.0, page, "regex", None, rv)
+    return ReconciledItem(statement, canon, lv, "llm_only", 0.0, page, "llm", lv, None)
+
+
+def _apply_confidence(
+    item: ReconciledItem,
+    regex: Optional[tuple],
+    llm: Optional[tuple],
+    page_text: Dict[int, str],
+    identities: Dict[str, bool],
+) -> None:
+    regex_value = regex[1] if regex else None
+    llm_value = llm[1].value if llm else None
+    agreement = regex_value is not None and llm_value is not None and regex_value == llm_value
+    page = page_text.get(item.page, "") if item.page is not None else ""
+    page_match = bool(page) and any(
+        re.search(
+            rf"(?<![\d,]){re.escape(candidate)}(?:\.\d+)?(?![\d,])",
+            page,
+        )
+        for candidate in value_candidates(item.value)
+    )
+    rules = _IDENTITY_RULES.get(item.statement, {}).get(item.line_item, ())
+    relevant_results = [identities[rule] for rule in rules if rule in identities]
+    identity_consistent = all(relevant_results) if relevant_results else None
+    item.confidence_factors = {
+        "extractors_agree": agreement,
+        "value_found_on_source_page": page_match,
+        "accounting_identities_consistent": identity_consistent,
+    }
+    passed = [value for value in item.confidence_factors.values() if value is not None]
+    item.confidence = sum(passed) / len(passed) if passed else 0.0
 
 
 def reconcile(
     deterministic: Dict[str, Any],
     llm_lines: Sequence[StatementLine],
     tolerance: float = TOLERANCE,
+    pages: Sequence[Tuple[int, str]] = (),
 ) -> Dict[str, Any]:
-    """Compare the deterministic and LLM extractions, statement by statement."""
+    """Compare both extractors and score each figure from verifiable evidence.
+
+    Confidence is the equal-weight mean of extractor agreement, source-page
+    text matching, and any applicable accounting identity checks.
+    """
     result: Dict[str, Any] = {}
     counts = {"matched": 0, "flagged": 0, "total": 0}
 
@@ -220,8 +319,13 @@ def reconcile(
         order = list(regex) + [k for k in llm if k not in regex]
         items: List[ReconciledItem] = []
         for key in order:
-            item = _reconcile_item(statement, (regex.get(key) or llm[key])[0],
-                                   regex.get(key), llm.get(key), tolerance)
+            item = _reconcile_item(
+                statement,
+                (regex.get(key) or llm[key])[0],
+                regex.get(key),
+                llm.get(key),
+                tolerance,
+            )
             items.append(item)
             counts["total"] += 1
             if item.status == "matched":
@@ -229,6 +333,21 @@ def reconcile(
             elif item.status in ("sign_mismatch", "value_mismatch", "llm_only", "regex_only"):
                 counts["flagged"] += 1
         result[statement] = items
+
+    chosen = {
+        statement: {item.line_item: item.value for item in result[statement]}
+        for statement in STATEMENTS
+    }
+    identities = check_results(
+        chosen["pnl"], chosen["balance_sheet"], chosen["cash_flow"]
+    )
+    page_text = {page: text for page, text in pages}
+    for statement in STATEMENTS:
+        regex = _regex_map(statement, deterministic)
+        llm = _llm_map(statement, llm_lines)
+        for item in result[statement]:
+            key = _key(item.line_item)
+            _apply_confidence(item, regex.get(key), llm.get(key), page_text, identities)
 
     result["summary"] = counts
     return result

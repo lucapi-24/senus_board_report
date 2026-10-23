@@ -312,7 +312,7 @@ async def ingest_document(
 
         tables = parse_tables(pages, column=use_column)
         llm_lines = await extract_structured(pages, use_label or "", column=use_column)
-        result = reconcile(tables, llm_lines)
+        result = reconcile(tables, llm_lines, pages=pages)
         proposal = build_proposal(result)
         await _persist(db, doc, result, proposal, len(pages), label=use_label, start_date=use_start, end_date=use_end)
         doc.status = lifecycle.advance(doc.status, lifecycle.EXTRACTED)
