@@ -43,29 +43,26 @@ export function Ingestion({ role, onDataChanged }: { role?: string; onDataChange
   const [documents, setDocuments] = useState<DocumentSummary[]>([])
   const [detail, setDetail] = useState<DocumentDetail | null>(null)
   const [period, setPeriod] = useState<PeriodDetail | null>(null)
-  const [periods, setPeriods] = useState<Period[]>([])  // All periods for current document
-  const [docPeriods, setDocPeriods] = useState<Map<number, Period[]>>(new Map())  // doc_id -> periods
+  const [periods, setPeriods] = useState<Period[]>([])
+  const [docPeriods, setDocPeriods] = useState<Map<number, Period[]>>(new Map())
   const [busy, setBusy] = useState('')
   const [error, setError] = useState('')
 
   const [file, setFile] = useState<File | null>(null)
   const [docType, setDocType] = useState('interim_results')
 
-  // Inline edit of document metadata
   const [editingDocId, setEditingDocId] = useState<number | null>(null)
   const [editLabel, setEditLabel] = useState('')
   const [editStart, setEditStart] = useState('')
   const [editEnd, setEditEnd] = useState('')
   const [editDocType, setEditDocType] = useState('interim_results')
 
-  // Confirm detected periods for a document
   const [confirmingDocId, setConfirmingDocId] = useState<number | null>(null)
   const [confirmingPeriods, setConfirmingPeriods] = useState<string[]>([])
 
   const loadDocuments = async () => {
     const docs = await api.documents()
     setDocuments(docs)
-    // Load periods for each document
     for (const doc of docs) {
       try {
         const docPeriods = await api.documentPeriods(doc.id)
@@ -81,11 +78,9 @@ export function Ingestion({ role, onDataChanged }: { role?: string; onDataChange
     setError('')
     const detailData = await api.document(id)
     setDetail(detailData)
-    // Load all periods for this document so user can switch between them
     try {
       const docPeriods = await api.documentPeriods(id)
       setPeriods(docPeriods)
-      // Select the first period by default
       if (docPeriods.length > 0) {
         const periodDetail = await api.periodDetail(docPeriods[0].label)
         setPeriod(periodDetail)
@@ -145,7 +140,6 @@ export function Ingestion({ role, onDataChanged }: { role?: string; onDataChange
       setDocType('interim_results')
       await loadDocuments()
       await openDocument(created.id)
-      // If document has detected periods, show confirmation UI
       if (created.detected_periods && created.detected_periods.length > 0) {
         setConfirmingDocId(created.id)
         setConfirmingPeriods(created.detected_periods.map((p) => p.label))
@@ -169,13 +163,33 @@ export function Ingestion({ role, onDataChanged }: { role?: string; onDataChange
         value = Number(entered.replace(/[, ]/g, ''))
         if (!Number.isFinite(value)) throw new Error('Enter a valid number')
       }
+      setPeriod((prev) => {
+        if (!prev) return prev
+        return {
+          ...prev,
+          pnl: prev.pnl.map((i) =>
+            i.line_item === item.line_item
+              ? { ...i, value_eur: value ?? i.value_eur, review_status: action === 'correct' ? 'corrected' : 'confirmed' }
+              : i
+          ),
+          balance_sheet: prev.balance_sheet.map((i) =>
+            i.line_item === item.line_item
+              ? { ...i, value_eur: value ?? i.value_eur, review_status: action === 'correct' ? 'corrected' : 'confirmed' }
+              : i
+          ),
+          cash_flow: prev.cash_flow.map((i) =>
+            i.line_item === item.line_item
+              ? { ...i, value_eur: value ?? i.value_eur, review_status: action === 'correct' ? 'corrected' : 'confirmed' }
+              : i
+          ),
+        }
+      })
       await api.updateItem(period?.label ?? detail?.period_label ?? '', {
         statement: item.statement,
         line_item: item.line_item,
         action,
         value,
       })
-      await openDocument(detail!.id)
       onDataChanged?.()
     })
 
@@ -276,7 +290,6 @@ export function Ingestion({ role, onDataChanged }: { role?: string; onDataChange
         </div>
       </section>
       <div className="container">
-
         {error && <div className="state state--error ingest__error">{error}</div>}
 
         {!isAdmin && (
@@ -287,47 +300,47 @@ export function Ingestion({ role, onDataChanged }: { role?: string; onDataChange
         )}
 
         {isAdmin && (
-        <section className="panel">
-          <h3 className="panel__subtitle">
-            <FileUp size={16} aria-hidden="true" /> Upload a document
-          </h3>
-          <div className="upload-grid">
-          <div className="field">
-            <span>PDF file</span>
-            <div className="file-field">
-              <input
-                id="pdf-upload"
-                type="file"
-                accept="application/pdf"
-                className="file-input-hidden"
-                onChange={(e) => setFile(e.target.files?.[0] ?? null)}
-              />
-              <label htmlFor="pdf-upload" className="btn btn--small file-trigger">
-                Choose file
+          <section className="panel">
+            <h3 className="panel__subtitle">
+              <FileUp size={16} aria-hidden="true" /> Upload a document
+            </h3>
+            <div className="upload-grid">
+              <div className="field">
+                <span>PDF file</span>
+                <div className="file-field">
+                  <input
+                    id="pdf-upload"
+                    type="file"
+                    accept="application/pdf"
+                    className="file-input-hidden"
+                    onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+                  />
+                  <label htmlFor="pdf-upload" className="btn btn--small file-trigger">
+                    Choose file
+                  </label>
+                </div>
+                {file && <span className="muted small">{file.name}</span>}
+                {!file && <span className="muted small">No file chosen</span>}
+              </div>
+              <label className="field">
+                <span>Document type</span>
+                <select value={docType} onChange={(e) => setDocType(e.target.value)}>
+                  <option value="interim_results">Interim results</option>
+                  <option value="annual_report">Annual report</option>
+                  <option value="management_accounts">Management accounts</option>
+                </select>
               </label>
+              <button
+                type="button"
+                className="btn btn--primary"
+                disabled={busy === 'upload' || !file}
+                onClick={handleUpload}
+              >
+                {busy === 'upload' ? 'Uploading…' : 'Upload'}
+              </button>
             </div>
-            {file && <span className="muted small">{file.name}</span>}
-            {!file && <span className="muted small">No file chosen</span>}
-          </div>
-          <label className="field">
-            <span>Document type</span>
-            <select value={docType} onChange={(e) => setDocType(e.target.value)}>
-              <option value="interim_results">Interim results</option>
-              <option value="annual_report">Annual report</option>
-              <option value="management_accounts">Management accounts</option>
-            </select>
-          </label>
-          <button
-            type="button"
-            className="btn btn--primary"
-            disabled={busy === 'upload' || !file}
-            onClick={handleUpload}
-          >
-            {busy === 'upload' ? 'Uploading…' : 'Upload'}
-          </button>
-        </div>
-      </section>
-      )}
+          </section>
+        )}
 
         {/* Period confirmation panel */}
         {confirmingDocId !== null && (
@@ -448,11 +461,7 @@ export function Ingestion({ role, onDataChanged }: { role?: string; onDataChange
                           >
                             Save
                           </button>
-                          <button
-                            type="button"
-                            className="btn btn--small"
-                            onClick={handleEditCancel}
-                          >
+                          <button type="button" className="btn btn--small" onClick={handleEditCancel}>
                             Cancel
                           </button>
                         </>
@@ -527,138 +536,146 @@ export function Ingestion({ role, onDataChanged }: { role?: string; onDataChange
               })}
             </ul>
           )}
-        </section>
-
-        {detail?.error && <div className="callout callout--error">{detail.error}</div>}
-
-        {detail && !detail.review?.summary && (
-          <section className="panel">
-            <div className="callout callout--info">
-              This document has not been processed yet. Press <strong>Process</strong> to extract the data before reviewing.
-            </div>
           </section>
-        )}
 
-        {detail && detail.review?.summary && period && (
-        <section className="panel review">
-          <div className="review__head">
-            <div className="review__title-row">
-              <div className="review__title">
-                <Check size={18} aria-hidden="true" /> Review · {period.label}
+          {detail?.error && <div className="callout callout--error">{detail.error}</div>}
+
+          {detail && !detail.review?.summary && (
+            <section className="panel">
+              <div className="callout callout--info">
+                This document has not been processed yet. Press <strong>Process</strong> to extract the data before reviewing.
               </div>
-              {periods.length > 1 && (
-                <div className="period-switcher">
-                  <span className="period-switcher__label">Period:</span>
-                  {periods.map((p) => (
-                    <button
-                      key={p.label}
-                      type="button"
-                      className={`period-btn ${period?.label === p.label ? 'is-active' : ''}`}
-                      onClick={() => handleSwitchPeriod(p.label)}
-                    >
-                      {p.label}
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-            <div className="review__summary">
-              <span className="pill pill--ok">{detail.review.summary.matched} matched</span>
-              <span className="pill pill--warn">{pending} to review</span>
-              {isAdmin && (
-                <button
-                  type="button"
-                  className="btn btn--primary btn--small"
-                  disabled={busy === 'publish' || detail.status === 'published'}
-                  onClick={handlePublish}
-                >
-                  {detail.status === 'published' ? 'Published' : 'Publish'}
-                </button>
-              )}
-            </div>
-          </div>
+            </section>
+          )}
 
-          {(['pnl', 'balance_sheet', 'cash_flow'] as const).map((statement) => {
-            const merged = merge(detail.review![statement], period[statement])
-            return (
-              <div key={statement} className="review__group">
-                <h3 className="review__subtitle">{STATEMENT_LABELS[statement] ?? statement}</h3>
-                <table className="review-table">
-                  <thead>
-                    <tr>
-                      <th>Line item</th>
-                      <th className="num">Value</th>
-                      <th>Status</th>
-                      <th className="num">Conf.</th>
-                      <th>Page</th>
-                      <th />
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {merged.map((item) => {
-                      const flagged = item.status !== 'matched' || item.review_status !== 'reported'
-                      const other =
-                        item.regex_value !== null && item.llm_value !== null
-                          ? item.value === item.regex_value
-                            ? item.llm_value
-                            : item.regex_value
-                          : null
-                      return (
-                        <tr
-                          key={`${statement}-${item.line_item}`}
-                          className={flagged && !['confirmed', 'corrected'].includes(item.review_status ?? '') ? 'is-flagged' : ''}
+          {detail && detail.review?.summary && period && (
+            <section className="panel review">
+              <div className="review__head">
+                <div className="review__title-row">
+                  <div className="review__title">
+                    <Check size={18} aria-hidden="true" /> Review · {period.label}
+                  </div>
+                  {periods.length > 1 && (
+                    <div className="period-switcher">
+                      <span className="period-switcher__label">Period:</span>
+                      {periods.map((p) => (
+                        <button
+                          key={p.label}
+                          type="button"
+                          className={`period-btn ${period?.label === p.label ? 'is-active' : ''}`}
+                          onClick={() => handleSwitchPeriod(p.label)}
                         >
-                          <td>{item.line_item}</td>
-                          <td className="num">
-                            {formatEur(item.value)}
-                            {other !== null && (
-                              <span className="review-table__other">
-                                vs {formatEur(other)}
-                              </span>
-                            )}
-                          </td>
-                          <td>
-                            <span className="muted small">
-                              {item.review_status ?? item.status}
-                            </span>
-                          </td>
-                          <td className="num small">{item.confidence.toFixed(2)}</td>
-                          <td className="small muted">{item.page ?? '—'}</td>
-                          <td className="review-table__actions">
-                            {isAdmin && flagged && (
-                              <>
-                                <button
-                                  type="button"
-                                  className="btn btn--small"
-                                  disabled={busy === `confirm-${item.line_item}`}
-                                  onClick={() => handleItem(item, 'confirm')}
-                                  title="Keep this value"
-                                >
-                                  Confirm
-                                </button>
-                                <button
-                                  type="button"
-                                  className="btn btn--small"
-                                  disabled={busy === `correct-${item.line_item}`}
-                                  onClick={() => handleItem(item, 'correct')}
-                                  title="Enter a corrected value"
-                                >
-                                  Correct
-                                </button>
-                              </>
-                            )}
-                          </td>
-                        </tr>
-                      )
-                    })}
-                  </tbody>
-                </table>
+                          {p.label}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                <div className="review__summary">
+                  <span className="pill pill--ok">{detail.review.summary.matched} matched</span>
+                  <span className="pill pill--warn">{pending} to review</span>
+                  {isAdmin && (
+                    <>
+                      <button
+                        type="button"
+                        className="btn btn--primary btn--small"
+                        disabled={busy === 'publish' || detail.status === 'published'}
+                        onClick={handlePublish}
+                      >
+                        {detail.status === 'published' ? 'Published' : 'Publish'}
+                      </button>
+                      <button
+                        type="button"
+                        className="btn btn--small"
+                        onClick={() => window.open(`${API_BASE}/api/documents/${detail.id}/file`, '_blank')}
+                      >
+                        View Document
+                      </button>
+                    </>
+                  )}
+                </div>
               </div>
-            )
-          })}
-        </section>
-        )}
+
+              {(['pnl', 'balance_sheet', 'cash_flow'] as const).map((statement) => {
+                const merged = merge(detail.review![statement], period[statement])
+                return (
+                  <div key={statement} className="review__group">
+                    <h3 className="review__subtitle">{STATEMENT_LABELS[statement] ?? statement}</h3>
+                    <table className="review-table">
+                      <thead>
+                        <tr>
+                          <th>Line item</th>
+                          <th className="num">Value</th>
+                          <th>Status</th>
+                          <th className="num">Conf.</th>
+                          <th>Page</th>
+                          <th />
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {merged.map((item) => {
+                          const flagged = item.status !== 'matched' || item.review_status !== 'reported'
+                          const other =
+                            item.regex_value !== null && item.llm_value !== null
+                              ? item.value === item.regex_value
+                                ? item.llm_value
+                                : item.regex_value
+                              : null
+                          return (
+                            <tr
+                              key={`${statement}-${item.line_item}`}
+                              className={flagged && !['confirmed', 'corrected'].includes(item.review_status ?? '') ? 'is-flagged' : ''}
+                            >
+                              <td>{item.line_item}</td>
+                              <td className="num">
+                                {formatEur(item.value)}
+                                {other !== null && (
+                                  <span className="review-table__other">
+                                    vs {formatEur(other)}
+                                  </span>
+                                )}
+                              </td>
+                              <td>
+                                <span className="muted small">
+                                  {item.review_status ?? item.status}
+                                </span>
+                              </td>
+                              <td className="num small">{item.confidence.toFixed(2)}</td>
+                              <td className="small muted">{item.page ?? '—'}</td>
+                              <td className="review-table__actions">
+                                {isAdmin && flagged && (
+                                  <>
+                                    <button
+                                      type="button"
+                                      className="btn btn--small"
+                                      disabled={busy === `confirm-${item.line_item}`}
+                                      onClick={() => handleItem(item, 'confirm')}
+                                      title="Keep this value"
+                                    >
+                                      Confirm
+                                    </button>
+                                    <button
+                                      type="button"
+                                      className="btn btn--small"
+                                      disabled={busy === `correct-${item.line_item}`}
+                                      onClick={() => handleItem(item, 'correct')}
+                                      title="Enter a corrected value"
+                                    >
+                                      Correct
+                                    </button>
+                                  </>
+                                )}
+                              </td>
+                            </tr>
+                          )})}
+                        </tbody>
+                      </table>
+                    </div>
+                  )
+                })}
+              </section>
+            )}
       </div>
     </div>
-  )
+    )
 }

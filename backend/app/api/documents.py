@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi.responses import FileResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -370,3 +371,25 @@ async def publish_document(
     await db.commit()
     await db.refresh(doc)
     return _reload(doc)
+
+
+@router.get("/{document_id}/file")
+async def download_document(
+    document_id: int,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Serve the original uploaded PDF file."""
+    doc = await db.get(Document, document_id)
+    if doc is None:
+        raise HTTPException(status_code=404, detail="Document not found")
+    if not doc.stored_path:
+        raise HTTPException(status_code=404, detail="Document has no stored file")
+    from pathlib import Path
+
+    p = Path(doc.stored_path)
+    if not p.exists():
+        raise HTTPException(status_code=404, detail="Document file not found on server")
+    from fastapi.responses import FileResponse
+
+    return FileResponse(path=p, media_type="application/pdf", filename=doc.filename)
