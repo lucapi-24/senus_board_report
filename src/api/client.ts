@@ -224,6 +224,32 @@ async function send<T>(path: string, method: string, body?: unknown): Promise<T 
   return (await res.json()) as T
 }
 
+export class PeriodReplacementError extends Error {
+  readonly periods: string[]
+
+  constructor(periods: string[], message: string) {
+    super(message)
+    this.name = 'PeriodReplacementError'
+    this.periods = periods
+  }
+}
+
+function isReplacementDetail(
+  value: unknown,
+): value is { code: string; periods: string[]; message: string } {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    'code' in value &&
+    value.code === 'period_replacement_confirmation_required' &&
+    'periods' in value &&
+    Array.isArray(value.periods) &&
+    value.periods.every((period) => typeof period === 'string') &&
+    'message' in value &&
+    typeof value.message === 'string'
+  )
+}
+
 export interface UploadFields {
   doc_type?: string
 }
@@ -322,7 +348,39 @@ export const api = {
     id: number,
     body: { periods: Array<{ column: number; start_date: string; end_date: string }> },
   ) => send<DocumentSummary>(`/api/documents/${id}/confirm-periods`, 'POST', body),
-  processDocument: (id: number) => send<DocumentSummary>(`/api/documents/${id}/process`, 'POST'),
+  processDocument: async (id: number, replaceExisting = false): Promise<DocumentSummary> => {
+    const query = replaceExisting ? '?replace_existing=true' : ''
+    const res = await fetch(`${API_BASE}/api/documents/${id}/process${query}`, {
+      method: 'POST',
+      headers: authHeaders(),
+    })
+    if (!res.ok) {
+      onUnauthorized(res.status)
+      const raw = await res.text()
+      let payload: unknown
+      try {
+        payload = JSON.parse(raw)
+      } catch {
+        payload = null
+      }
+      const detail =
+        typeof payload === 'object' && payload !== null && 'detail' in payload
+          ? payload.detail
+          : null
+      if (res.status === 409 && isReplacementDetail(detail)) {
+        throw new PeriodReplacementError(detail.periods, detail.message)
+      }
+      const message =
+        typeof detail === 'string'
+          ? detail
+          : typeof detail === 'object' && detail !== null && 'message' in detail &&
+              typeof detail.message === 'string'
+            ? detail.message
+            : raw || `Request failed: ${res.status} ${res.statusText}`
+      throw new Error(message)
+    }
+    return (await res.json()) as DocumentSummary
+  },
   publishDocument: (id: number) => send<DocumentSummary>(`/api/documents/${id}/publish`, 'POST'),
   deleteDocument: (id: number) => send<unknown>(`/api/documents/${id}`, 'DELETE'),
   updateDocument: (

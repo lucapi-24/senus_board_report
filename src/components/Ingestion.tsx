@@ -10,6 +10,7 @@ import {
   type PeriodDetail,
   type ReconciledItem,
   type LineItem,
+  PeriodReplacementError,
 } from '../api/client'
 
 const STATEMENT_LABELS: Record<string, string> = {
@@ -166,7 +167,16 @@ export function Ingestion({ role, onDataChanged }: { role?: string; onDataChange
 
   const handleProcess = (id: number) =>
     run('process', async () => {
-      await api.processDocument(id)
+      try {
+        await api.processDocument(id)
+      } catch (error) {
+        if (!(error instanceof PeriodReplacementError)) throw error
+        const labels = error.periods.join(', ')
+        if (!window.confirm(`Processing will replace existing period data (${labels}). Continue?`)) {
+          return
+        }
+        await api.processDocument(id, true)
+      }
       await loadDocuments()
       await openDocument(id)
       onDataChanged?.()

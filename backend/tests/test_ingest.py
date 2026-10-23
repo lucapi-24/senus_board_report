@@ -1,6 +1,15 @@
 from datetime import date
 
-from app.services.ingest import _chosen, _months_between, _provenance, build_proposal
+import pytest
+
+from app.services.ingest import (
+    PeriodReplacementRequired,
+    _chosen,
+    _months_between,
+    _provenance,
+    build_proposal,
+    require_replacement_confirmation,
+)
 from app.services.llm_extract import StatementLine
 from app.services.reconciliation import reconcile
 
@@ -38,3 +47,11 @@ def test_months_between():
     assert _months_between(date(2025, 7, 1), date(2025, 12, 31)) == 6
     assert _months_between(date(2024, 7, 1), date(2025, 6, 30)) == 12
     assert _months_between(None, None) == 0
+
+
+def test_existing_periods_require_explicit_replacement_confirmation():
+    with pytest.raises(PeriodReplacementRequired, match="HY2026"):
+        require_replacement_confirmation(["HY2026"], replace_existing=False)
+
+    require_replacement_confirmation(["HY2026"], replace_existing=True)
+    require_replacement_confirmation([], replace_existing=False)

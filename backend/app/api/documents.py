@@ -22,7 +22,12 @@ from app.schemas.documents import (
 )
 from app.schemas.financial import PeriodResponse
 from app.services import lifecycle
-from app.services.ingest import ingest_document, read_pages
+from app.services.ingest import (
+    PeriodReplacementRequired,
+    ingest_document,
+    read_pages,
+    require_replacement_confirmation,
+)
 from app.services import period_detector
 
 router = APIRouter(prefix="/api/documents", tags=["documents"])
@@ -32,6 +37,20 @@ UPLOAD_DIR = Path(__file__).resolve().parents[2] / settings.UPLOAD_DIR
 
 def _reload(doc: Document) -> DocumentResponse:
     return _document_response(doc)
+
+
+def _replacement_confirmation_error(exc: PeriodReplacementRequired) -> HTTPException:
+    return HTTPException(
+        status_code=409,
+        detail={
+            "code": "period_replacement_confirmation_required",
+            "periods": exc.labels,
+            "message": (
+                "Processing would replace existing periods: "
+                f"{', '.join(exc.labels)}. Confirm to continue."
+            ),
+        },
+    )
 
 
 def _period_state(doc: Document) -> dict:
@@ -294,6 +313,7 @@ async def process_document(
     document_id: int,
     db: AsyncSession = Depends(get_db),
     user: User = Depends(require_admin),
+    replace_existing: bool = False,
 ):
     """Process only periods that passed the explicit confirmation step."""
     doc = await db.get(Document, document_id)
@@ -307,6 +327,21 @@ async def process_document(
     if not detected or any(not p.get("start_date") or not p.get("end_date") for p in detected):
         raise HTTPException(status_code=409, detail="Confirm valid dates for every detected column.")
 
+    period_labels = [
+        period_detector.derive_label(
+            date.fromisoformat(item["start_date"]),
+            date.fromisoformat(item["end_date"]),
+        )
+        for item in detected
+    ]
+    existing_labels = (
+        await db.execute(select(Period.label).where(Period.label.in_(period_labels)))
+    ).scalars().all()
+    try:
+        require_replacement_confirmation(existing_labels, replace_existing)
+    except PeriodReplacementRequired as exc:
+        raise _replacement_confirmation_error(exc) from exc
+
     for pd in sorted(detected, key=lambda period: period["column"]):
         start_d = date.fromisoformat(pd["start_date"])
         end_d = date.fromisoformat(pd["end_date"])
@@ -314,14 +349,18 @@ async def process_document(
         doc.period_label = label
         doc.period_start = start_d
         doc.period_end = end_d
-        await ingest_document(
-            document_id,
-            db,
-            column=pd["column"],
-            period_label=label,
-            start_date=start_d,
-            end_date=end_d,
-        )
+        try:
+            await ingest_document(
+                document_id,
+                db,
+                column=pd["column"],
+                period_label=label,
+                start_date=start_d,
+                end_date=end_d,
+                replace_existing=replace_existing,
+            )
+        except PeriodReplacementRequired as exc:
+            raise _replacement_confirmation_error(exc) from exc
     primary = next((period for period in detected if period["column"] == 0), detected[0])
     doc.period_label = period_detector.derive_label(
         date.fromisoformat(primary["start_date"]), date.fromisoformat(primary["end_date"])
@@ -330,7 +369,18 @@ async def process_document(
     doc.period_end = date.fromisoformat(primary["end_date"])
 
     db.add(
-        AuditLog(user_email=user.email, action="process", entity="document", entity_id=document_id)
+        AuditLog(
+            user_email=user.email,
+            action="process",
+            entity="document",
+            entity_id=document_id,
+            after_json=json.dumps(
+                {
+                    "replace_existing": replace_existing,
+                    "replaced_periods": existing_labels,
+                }
+            ),
+        )
     )
     await db.commit()
     doc = await db.get(Document, document_id)

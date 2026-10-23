@@ -143,3 +143,45 @@ def test_processing_is_blocked_until_periods_are_confirmed():
 
     assert error.value.status_code == 409
     assert "Confirm all reporting periods" in error.value.detail
+
+
+def test_processing_existing_periods_requires_explicit_confirmation():
+    document = SimpleNamespace(
+        id=9,
+        status="uploaded",
+        periods_detected_json=json.dumps(
+            {
+                "periods": [
+                    {
+                        "column": 0,
+                        "start_date": "2025-07-01",
+                        "end_date": "2025-12-31",
+                    }
+                ],
+                "confirmed": True,
+                "validation_errors": [],
+            }
+        ),
+    )
+    db = SimpleNamespace(
+        get=AsyncMock(return_value=document),
+        execute=AsyncMock(
+            return_value=SimpleNamespace(
+                scalars=lambda: SimpleNamespace(all=lambda: ["HY2026"])
+            )
+        ),
+    )
+
+    with pytest.raises(HTTPException) as error:
+        asyncio.run(
+            process_document(
+                9,
+                db,
+                SimpleNamespace(email="admin@example.test"),
+            )
+        )
+
+    assert error.value.status_code == 409
+    assert error.value.detail["code"] == "period_replacement_confirmation_required"
+    assert error.value.detail["periods"] == ["HY2026"]
+    assert document.status == "uploaded"

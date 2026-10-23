@@ -44,6 +44,19 @@ ITEM_MODEL = {
 }
 
 
+class PeriodReplacementRequired(ValueError):
+    def __init__(self, labels: List[str]):
+        self.labels = labels
+        super().__init__(f"Replacing existing periods requires explicit confirmation: {', '.join(labels)}")
+
+
+def require_replacement_confirmation(
+    labels: List[str], replace_existing: bool
+) -> None:
+    if labels and not replace_existing:
+        raise PeriodReplacementRequired(labels)
+
+
 def read_pages(pdf_path: str) -> List[Tuple[int, str]]:
     if not pdf_path:
         raise ValueError("Document has no stored file")
@@ -148,12 +161,17 @@ async def _persist(
     label: Optional[str] = None,
     start_date: Optional[date] = None,
     end_date: Optional[date] = None,
+    replace_existing: bool = False,
 ) -> None:
     use_label = label or doc.period_label
     use_start = start_date or doc.period_start
     use_end = end_date or doc.period_end
 
     existing = (await db.execute(select(Period).where(Period.label == use_label))).scalars().all()
+    require_replacement_confirmation(
+        [period.label for period in existing],
+        replace_existing,
+    )
     for period in existing:
         await db.delete(period)
     await db.flush()
@@ -283,6 +301,7 @@ async def ingest_document(
     period_label: Optional[str] = None,
     start_date: Optional[date] = None,
     end_date: Optional[date] = None,
+    replace_existing: bool = False,
 ) -> Dict[str, Any]:
     """Process an uploaded document end to end. Returns the review proposal.
 
@@ -294,6 +313,16 @@ async def ingest_document(
     if doc is None:
         raise ValueError(f"Unknown document: {document_id}")
 
+    use_label = period_label or doc.period_label
+    if use_label and not replace_existing:
+        existing_label = await db.scalar(
+            select(Period.label).where(Period.label == use_label)
+        )
+        require_replacement_confirmation(
+            [existing_label] if existing_label else [],
+            replace_existing,
+        )
+
     doc.status = lifecycle.advance(doc.status, lifecycle.PROCESSING)
     doc.error = None
     await db.commit()
@@ -302,7 +331,6 @@ async def ingest_document(
         pages = read_pages(doc.stored_path)
 
         # Determine which period/column to process
-        use_label = period_label or doc.period_label
         use_start = start_date or doc.period_start
         use_end = end_date or doc.period_end
         use_column = column if column is not None else get_column_for_period(use_start, use_end, pages)
@@ -314,7 +342,17 @@ async def ingest_document(
         llm_lines = await extract_structured(pages, use_label or "", column=use_column)
         result = reconcile(tables, llm_lines, pages=pages)
         proposal = build_proposal(result)
-        await _persist(db, doc, result, proposal, len(pages), label=use_label, start_date=use_start, end_date=use_end)
+        await _persist(
+            db,
+            doc,
+            result,
+            proposal,
+            len(pages),
+            label=use_label,
+            start_date=use_start,
+            end_date=use_end,
+            replace_existing=replace_existing,
+        )
         doc.status = lifecycle.advance(doc.status, lifecycle.EXTRACTED)
         await db.commit()
         return proposal
