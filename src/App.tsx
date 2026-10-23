@@ -121,7 +121,7 @@ function App() {
             <p className="state__hint">Ensure the API is running at http://localhost:8000.</p>
           </div>
         ) : (
-          <Dashboard summary={summary} selected={selected} onSelect={setSelected} />
+          <Dashboard summary={summary} selected={selected} />
         )}
       </main>
       <Footer />

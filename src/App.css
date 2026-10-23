@@ -520,42 +520,6 @@
   margin-top: 0.625rem;
 }
 
-.period-selector {
-  display: flex;
-  gap: 0.75rem;
-  background: rgba(255, 255, 255, 0.08);
-  padding: 0.5rem;
-  border-radius: var(--radius);
-  border: 0.063rem solid rgba(255, 255, 255, 0.12);
-}
-
-.period-selector__btn {
-  display: flex;
-  flex-direction: column;
-  gap: 0.125rem;
-  background: transparent;
-  border: none;
-  border-radius: var(--radius-sm);
-  padding: 0.625rem 1.25rem;
-  text-align: left;
-  color: rgba(255, 255, 255, 0.7);
-  transition: background 0.2s ease, color 0.2s ease;
-}
-
-.period-selector__btn strong {
-  font-size: 1rem;
-  font-weight: 700;
-}
-
-.period-selector__btn span {
-  font-size: 0.75rem;
-}
-
-.period-selector__btn.is-active {
-  background: var(--senus-teal);
-  color: #fff;
-}
-
 .dashboard__body {
   padding: 2.5rem 1.5rem 0;
   display: flex;
@@ -1127,13 +1091,6 @@
   .dashboard__hero-row {
     align-items: flex-start;
   }
-  .period-selector {
-    width: 100%;
-    flex-wrap: wrap;
-  }
-  .period-selector__btn {
-    flex: 1;
-  }
 }
 
 /* Phone / small tablet */
@@ -1201,13 +1158,6 @@
   }
   .dashboard__lede {
     font-size: 0.938rem;
-  }
-  .period-selector {
-    flex-direction: column;
-    gap: 0.375rem;
-  }
-  .period-selector__btn {
-    width: 100%;
   }
   .senus-header__inner {
     padding: 0 1rem;
@@ -1283,10 +1233,15 @@
   font-variant-numeric: tabular-nums;
 }
 
-  .btn--primary:hover {
-    background: var(--senus-peach);
-    color: #1f2a2f;
-  }
+.btn--primary:hover {
+  background: var(--senus-peach);
+  color: #1f2a2f;
+}
+
+.btn--primary{
+  justify-content: center;
+  text-align: center;
+}
 
 .btn--small {
   padding: 0.375rem 0.875rem;

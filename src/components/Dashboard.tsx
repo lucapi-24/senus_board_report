@@ -91,10 +91,9 @@ function RatioPanel({ title, hint, items }: { title: string; hint?: string; item
 interface DashboardProps {
   summary: FinancialSummary[]
   selected: string
-  onSelect: (label: string) => void
 }
 
-export function Dashboard({ summary, selected, onSelect }: DashboardProps) {
+export function Dashboard({ summary, selected }: DashboardProps) {
   const [detail, setDetail] = useState<PeriodDetail | null>(null)
   const [insights, setInsights] = useState<AIInsight[]>([])
   const [insightsLoading, setInsightsLoading] = useState(false)
@@ -323,24 +322,6 @@ export function Dashboard({ summary, selected, onSelect }: DashboardProps) {
                 HY2026 and its HY2025 comparative are extracted from the source report in full.
                 FY2025 is available as revenue only (from the business review narrative).
               </p>
-            </div>
-            <div className="period-selector" role="tablist">
-              {summary.map((s) => (
-                <button
-                  key={s.period.label}
-                  role="tab"
-                  aria-selected={selected === s.period.label}
-                  className={`period-selector__btn ${
-                    selected === s.period.label ? 'is-active' : ''
-                  }`}
-                  onClick={() => onSelect(s.period.label)}
-                >
-                  <strong>{s.period.label}</strong>
-                  <span>
-                    {s.period.start_date} → {s.period.end_date}
-                  </span>
-                </button>
-              ))}
             </div>
           </div>
         </div>
