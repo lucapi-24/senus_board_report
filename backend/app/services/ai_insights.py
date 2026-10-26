@@ -48,6 +48,9 @@ client = AsyncOpenAI(
 
 _NUMBER_RE = re.compile(r"(?<![A-Za-z0-9])[-+]?\d[\d,]*(?:\.\d+)?(?![A-Za-z0-9])")
 _INSIGHT_MARKER_RE = re.compile(r"\{([A-Za-z][A-Za-z0-9_]*)\}")
+_PDF_NUMBER_RE = re.compile(
+    r"(?<![A-Za-z])(?:€\s*)?[-+]?\d[\d,]*(?:\.\d+)?\s*[kKmM]?"
+)
 _CAUSAL_RE = re.compile(
     r"\b(?:because|due to|cause[sd]? by|caus(?:e|es|ed|ing)|"
     r"drive|drives|drove|driven|driving|as a result of|as a consequence of|"
@@ -170,6 +173,7 @@ def _source_index(period: Period) -> Dict[str, Dict[str, Any]]:
                 "formula": None,
                 "pages": [int(page)] if page is not None else [],
                 "source_note": item_source_note,
+                "period_label": period.label,
             }
             values[statement][item.line_item] = float(item.value_eur)
 
@@ -225,6 +229,7 @@ def _source_index(period: Period) -> Dict[str, Dict[str, Any]]:
             "formula": metadata_for_metric["formula"],
             "pages": pages,
             "source_note": note,
+            "period_label": period.label,
         }
 
     duration_key = "period:duration_months"
@@ -295,6 +300,19 @@ def _insight_pdf_excerpts(
                     for candidate in candidates
                 ):
                     continue
+                numeric_matches = list(_PDF_NUMBER_RE.finditer(line))
+                if len(numeric_matches) > 1:
+                    current_match = next(
+                        (
+                            match
+                            for match in numeric_matches
+                            if _pdf_number_matches_source(match.group(), numeric_value)
+                        ),
+                        None,
+                    )
+                    if current_match is None:
+                        continue
+                    line = line[:current_match.end()].rstrip()
                 excerpts = lines_by_page.setdefault(page, [])
                 if line not in excerpts and total_lines < max_lines:
                     excerpts.append(line)
@@ -305,6 +323,9 @@ def _insight_pdf_excerpts(
                     and any(char.isdigit() for char in page_lines[index + 1])
                 ):
                     continuation = page_lines[index + 1]
+                    continuation_matches = list(_PDF_NUMBER_RE.finditer(continuation))
+                    if len(continuation_matches) > 1:
+                        continue
                     if continuation not in excerpts and total_lines < max_lines:
                         excerpts.append(continuation)
                         total_lines += 1
@@ -313,6 +334,119 @@ def _insight_pdf_excerpts(
         for page, lines in lines_by_page.items()
         if lines
     }
+
+
+def _pdf_number_matches_source(text: str, source_value: float) -> bool:
+    if not _PDF_NUMBER_RE.fullmatch(text.strip()):
+        return False
+    numeric_text = re.sub(r"[€,\s]", "", text).lower()
+    multiplier = 1
+    if numeric_text.endswith("k"):
+        multiplier = 1000
+        numeric_text = numeric_text[:-1]
+    elif numeric_text.endswith("m"):
+        multiplier = 1_000_000
+        numeric_text = numeric_text[:-1]
+    try:
+        printed_value = abs(float(numeric_text)) * multiplier
+    except ValueError:
+        return False
+    precision_match = re.search(r"\.(\d+)", numeric_text)
+    precision = len(precision_match.group(1)) if precision_match else 0
+    tolerance = max(0.5 * (10 ** -precision) * multiplier, 0.5)
+    return abs(printed_value - abs(source_value)) <= tolerance
+
+
+def _attach_pdf_excerpts(
+    source_index: Dict[str, Dict[str, Any]],
+    pdf_pages: Dict[int, str],
+    period_label: str,
+) -> None:
+    for source_id, source in source_index.items():
+        source["pdf_excerpts"] = []
+        if not source_id.startswith("kpi:"):
+            continue
+        pending = list(_KPI_DEPENDENCIES.get(source_id.removeprefix("kpi:"), ()))
+        dependencies: List[Dict[str, Any]] = []
+        visited: set[str] = set()
+        while pending:
+            dependency_id = pending.pop()
+            if dependency_id in visited or dependency_id not in source_index:
+                continue
+            visited.add(dependency_id)
+            if dependency_id.startswith("kpi:"):
+                pending.extend(
+                    _KPI_DEPENDENCIES.get(dependency_id.removeprefix("kpi:"), ())
+                )
+            else:
+                dependencies.append(source_index[dependency_id])
+
+        citations: List[InsightEvidence] = []
+        seen: set[Tuple[int, str]] = set()
+        for dependency in dependencies:
+            for page in dependency["pages"]:
+                page_text = pdf_pages.get(page, "")
+                if not page_text:
+                    continue
+                matching_lines: List[Tuple[str, re.Match[str]]] = []
+                for line in page_text.splitlines():
+                    number_matches = list(_PDF_NUMBER_RE.finditer(line))
+                    matching_number = next(
+                        (
+                            match
+                            for match in number_matches
+                            if _pdf_number_matches_source(
+                                match.group(),
+                                float(dependency["value"]),
+                            )
+                        ),
+                        None,
+                    )
+                    if matching_number is not None:
+                        matching_lines.append((line, matching_number))
+                label_lines = [
+                    (line, match)
+                    for line, match in matching_lines
+                    if _normalise_text(dependency["label"]) in _normalise_text(line)
+                ]
+                selected_lines = label_lines or (
+                    matching_lines if len(matching_lines) == 1 else []
+                )
+                for line, matching_number in selected_lines:
+                    quote = line[:matching_number.end()].rstrip()
+                    citation_key = (page, quote)
+                    if citation_key in seen:
+                        continue
+                    seen.add(citation_key)
+                    citations.append(
+                        InsightEvidence(
+                            page=page,
+                            quote=quote,
+                            period_label=period_label,
+                        )
+                    )
+        source["pdf_excerpts"] = citations
+
+
+def _pdf_number_matches_source(text: str, source_value: float) -> bool:
+    if not _PDF_NUMBER_RE.fullmatch(text.strip()):
+        return False
+    numeric_text = re.sub(r"[€,\s]", "", text).lower()
+    multiplier = 1
+    if numeric_text.endswith("k"):
+        multiplier = 1000
+        numeric_text = numeric_text[:-1]
+    elif numeric_text.endswith("m"):
+        multiplier = 1_000_000
+        numeric_text = numeric_text[:-1]
+    try:
+        printed_value = abs(float(numeric_text)) * multiplier
+    except ValueError:
+        return False
+    precision_match = re.search(r"\.(\d+)", numeric_text)
+    precision = len(precision_match.group(1)) if precision_match else 0
+    tolerance = max(0.5 * (10 ** -precision) * multiplier, 0.5)
+    return abs(printed_value - abs(source_value)) <= tolerance
 
 
 def _estimate_prompt_tokens(prompt: str) -> int:
@@ -347,7 +481,7 @@ Minimal source lines from the same period (page numbers are citations; do not in
 Return a JSON object with an "insights" array of 3-4 concise items. Each item must have:
 - "section": short topic
 - "data": concise factual supporting detail, using only markers such as {{ebitda_margin}} instead of writing figures
-- "interpretation": one or two concise sentences that use markers such as {{gross_margin}} instead of writing figures
+- "interpretation": a concise explanation that uses markers such as {{gross_margin}} instead of writing figures
 - "claims": one object per marker, each {{"claim_text": exact marker copied from data or interpretation, "source_id": exact available-fact source_id, "value": exact numeric source value}}
 - "evidence": optional exact PDF quotations as [{{"page": page_number, "quote": exact quote}}]
 
@@ -357,7 +491,6 @@ Rules:
 - Every marker must have exactly one claim with its matching source_id and exact numeric source value.
 - Cite only source IDs listed in Available KPIs. Never use unavailable facts or infer missing values.
 - Do not say why a metric changed, or attribute a cause, unless the entire causal sentence is quoted verbatim from a supplied excerpt and cited in evidence.
-- Use relevant available KPIs to explain relationships between metrics when helpful; do not imply unsupported causation.
 - Do not claim a contract, customer, cause, forecast, target, or event unless explicitly supported by these facts or quoted evidence.
 - Do not use confidence scores or add claims about other periods.
 - Keep the complete response concise enough to fit within the response token limit."""
@@ -848,6 +981,7 @@ async def generate_insights(
         else:
             logger.warning("Insight source PDF is missing for document id %s", document.id)
 
+    _attach_pdf_excerpts(source_index, pdf_pages, period.label)
     facts = _insight_prompt_facts(source_index)
     supplied_pages = _insight_pdf_excerpts(source_index, pdf_pages)
     period_months = period_duration_months(period.start_date, period.end_date)

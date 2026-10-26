@@ -98,6 +98,12 @@ class FinancialSummary(BaseModel):
     revenue_yoy_period_label: Optional[str] = None
 
 
+class InsightEvidence(BaseModel):
+    page: int
+    quote: str
+    period_label: Optional[str] = None
+
+
 class InsightSource(BaseModel):
     source_id: str
     claim_text: str
@@ -107,14 +113,9 @@ class InsightSource(BaseModel):
     period_label: Optional[str] = None
     formula: Optional[str] = None
     pages: List[int] = Field(default_factory=list)
+    pdf_excerpts: List[InsightEvidence] = Field(default_factory=list)
     source_note: Optional[str] = None
     verified: bool = True
-
-
-class InsightEvidence(BaseModel):
-    page: int
-    quote: str
-    period_label: Optional[str] = None
 
 
 class AIInsight(BaseModel):

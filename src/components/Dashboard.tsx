@@ -129,6 +129,7 @@ export function Dashboard({ summary, selected }: DashboardProps) {
   const [detail, setDetail] = useState<PeriodDetail | null>(null)
   const [insights, setInsights] = useState<AIInsight[]>([])
   const [insightsLoading, setInsightsLoading] = useState(Boolean(selected))
+  const [sourceDocumentError, setSourceDocumentError] = useState('')
   const [comparison, setComparison] = useState<PeriodCompareResult | null>(null)
   const [comparisonLoading, setComparisonLoading] = useState(false)
   const [compareSelection, setCompareSelection] = useState<{
@@ -147,6 +148,18 @@ export function Dashboard({ summary, selected }: DashboardProps) {
       setInsightsLoading(false)
     }
   }, [selected])
+
+  const openSourcePage = async (page: number) => {
+    if (detail?.source_doc_id == null) return
+    try {
+      setSourceDocumentError('')
+      await api.openDocumentFile(detail.source_doc_id, page)
+    } catch (error) {
+      setSourceDocumentError(
+        error instanceof Error ? error.message : 'Could not open the source PDF.',
+      )
+    }
+  }
 
   const handleCompare = async () => {
     if (!compareSelection.label_a || !compareSelection.label_b || compareSelection.label_a === compareSelection.label_b) return
@@ -978,46 +991,99 @@ export function Dashboard({ summary, selected }: DashboardProps) {
                 <article key={i} className="insight-card">
                   <div className="insight-card__head">
                     <h3>{insight.section}</h3>
-                    {insight.total_claims > 0 && (
-                      <span className="insight-card__confidence">
-                        {insight.verified_claims}/{insight.total_claims} claims verified
+                    <div className="insight-card__confidence">
+                      <span>
+                        {insight.verified_claims}/{insight.total_claims} cifras verificadas
                       </span>
-                    )}
+                      {[...new Set(insight.sources.flatMap((source) => source.pages))]
+                        .sort((a, b) => a - b)
+                        .map((page) => (
+                          <button
+                            key={page}
+                            className="btn btn-ghost"
+                            type="button"
+                            aria-label={`Abrir ${selected} en página ${page} del PDF fuente`}
+                            disabled={detail?.source_doc_id == null}
+                            onClick={() => void openSourcePage(page)}
+                          >
+                            p. {page}
+                          </button>
+                        ))}
+                    </div>
                   </div>
-                  {insight.data && (
-                    <p className="insight-card__statement">
-                      <strong>Data</strong> {insight.data}
-                    </p>
-                  )}
-                  {insight.interpretation && (
-                    <p className="insight-card__statement">
-                      <strong>Interpretation</strong> {insight.interpretation}
-                    </p>
-                  )}
-                  {!insight.data && !insight.interpretation && <p>{insight.insight}</p>}
-                  {insight.sources.length > 0 && (
-                    <ul className="insight-card__sources" aria-label="Verified data sources">
+                  <p className="insight-card__statement">
+                    {insight.interpretation ?? insight.data ?? insight.insight}
+                  </p>
+                  <details className="insight-card__details">
+                    <summary>Fuentes y cálculo</summary>
+                    {insight.data && (
+                      <p className="insight-card__statement">
+                        <strong>Datos</strong> {insight.data}
+                      </p>
+                    )}
+                    <ul className="insight-card__sources" aria-label="Fuentes de datos verificadas">
                       {insight.sources.map((source, sourceIndex) => (
                         <li key={`${source.source_id}-${sourceIndex}`}>
                           <span>
                             {source.claim_text} → {source.label} ({source.origin})
-                            {source.pages.length > 0 && `, PDF p. ${source.pages.join(', ')}`}
                           </span>
-                          {source.formula && <small>{source.formula}</small>}
+                          {source.formula && <small>Fórmula: {source.formula}</small>}
                           {source.source_note && <small>{source.source_note}</small>}
+                          {source.pdf_excerpts.map((excerpt, excerptIndex) => (
+                            <small key={`${source.source_id}-excerpt-${excerptIndex}`}>
+                              {excerpt.period_label ?? selected}, PDF p. {excerpt.page}: “{excerpt.quote}”
+                              <button
+                                className="btn btn-ghost"
+                                type="button"
+                                aria-label={`Abrir ${excerpt.period_label ?? selected} en página ${excerpt.page} del PDF fuente`}
+                                disabled={detail?.source_doc_id == null}
+                                onClick={() => void openSourcePage(excerpt.page)}
+                              >
+                                Abrir página
+                              </button>
+                            </small>
+                          ))}
+                          {source.pages.length > 0 && (
+                            <small>
+                              {source.pages.map((page) => (
+                                <button
+                                  key={`${source.source_id}-page-${page}`}
+                                  className="btn btn-ghost"
+                                  type="button"
+                                  aria-label={`Abrir ${source.period_label ?? selected} en página ${page} del PDF fuente`}
+                                  disabled={detail?.source_doc_id == null}
+                                  onClick={() => void openSourcePage(page)}
+                                >
+                                  {source.period_label ?? selected}, PDF p. {page}
+                                </button>
+                              ))}
+                            </small>
+                          )}
                         </li>
                       ))}
                       {insight.evidence.map((item, evidenceIndex) => (
                         <li key={`evidence-${evidenceIndex}`}>
-                          <span>PDF p. {item.page}: “{item.quote}”</span>
+                          <span>
+                            {item.period_label ?? selected}, PDF p. {item.page}: “{item.quote}”
+                          </span>
+                          <button
+                            className="btn btn-ghost"
+                            type="button"
+                            aria-label={`Abrir ${item.period_label ?? selected} en página ${item.page} del PDF fuente`}
+                            disabled={detail?.source_doc_id == null}
+                            onClick={() => void openSourcePage(item.page)}
+                          >
+                            Abrir página
+                          </button>
                         </li>
                       ))}
                     </ul>
-                  )}
+                  </details>
                 </article>
               ))}
             </div>
           )}
+          {sourceDocumentError && <p role="alert">{sourceDocumentError}</p>}
         </section>
 
         {/* AI comparison */}

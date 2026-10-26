@@ -146,6 +146,7 @@ export interface InsightSource {
   period_label?: string | null
   formula: string | null
   pages: number[]
+  pdf_excerpts: InsightEvidence[]
   source_note: string | null
   verified: boolean
 }
@@ -317,7 +318,7 @@ export const api = {
   documents: () => get<DocumentSummary[]>('/api/documents'),
   document: (id: number) => get<DocumentDetail>(`/api/documents/${id}`),
   documentPeriods: (id: number) => get<Period[]>(`/api/documents/${id}/periods`),
-  openDocumentFile: async (id: number) => {
+  openDocumentFile: async (id: number, page?: number) => {
     const viewer = window.open('about:blank', '_blank')
     if (!viewer) throw new Error('Allow pop-ups to view the source document')
     viewer.opener = null
@@ -331,7 +332,7 @@ export const api = {
         throw new Error(`Could not open document: ${res.status} ${res.statusText}`)
       }
       const objectUrl = URL.createObjectURL(await res.blob())
-      viewer.location.href = objectUrl
+      viewer.location.href = page ? `${objectUrl}#page=${page}` : objectUrl
       window.setTimeout(() => URL.revokeObjectURL(objectUrl), 10 * 60 * 1000)
     } catch (error) {
       viewer.close()

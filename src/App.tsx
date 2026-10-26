@@ -33,7 +33,7 @@ function App() {
       setSummary(data)
       setSelected((prev) => prev || data[0]?.period.label || '')
       setError('')
-      const latest = data[0]?.period.label || selected
+      const latest = data[0]?.period.label
       if (latest) {
         try {
           const detail = await api.periodDetail(latest)
@@ -121,7 +121,7 @@ function App() {
             <p className="state__hint">Ensure the API is running at http://localhost:8000.</p>
           </div>
         ) : (
-          <Dashboard summary={summary} selected={selected} />
+          <Dashboard key={selected} summary={summary} selected={selected} />
         )}
       </main>
       <Footer />

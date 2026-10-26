@@ -279,6 +279,36 @@ def test_number_without_marker_is_rejected():
     assert "unmarked numeric value" in reason
 
 
+def test_multi_column_pdf_excerpt_keeps_current_period_value_only():
+    source_index = {
+        "pnl:Revenue": {
+            "source_id": "pnl:Revenue",
+            "label": "Revenue",
+            "value": 354813.0,
+            "origin": "reported",
+            "formula": None,
+            "pages": [5],
+            "source_note": None,
+        },
+        "kpi:revenue": {
+            "source_id": "kpi:revenue",
+            "label": "Revenue",
+            "value": 354813.0,
+            "origin": "reported",
+            "formula": "As reported",
+            "pages": [5],
+            "source_note": None,
+        },
+    }
+
+    excerpts = ai_insights._insight_pdf_excerpts(
+        source_index,
+        {5: "Revenue 354,813 340,931"},
+    )
+
+    assert excerpts == {5: "Revenue 354,813"}
+
+
 def test_insight_prompt_uses_compact_kpis_and_stays_within_free_tier_budget(monkeypatch, caplog):
     source_index = {
         "pnl:Revenue": {

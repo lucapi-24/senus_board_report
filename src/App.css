@@ -970,12 +970,33 @@
 }
 
 .insight-card__confidence {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.25rem;
   font-size: 0.75rem;
   font-weight: 700;
   color: var(--senus-teal);
   background: var(--senus-teal-soft);
   padding: 0.125rem 0.5rem;
   border-radius: var(--radius-pill);
+}
+
+.insight-card__confidence .btn {
+  padding: 0 0.25rem;
+  font-size: inherit;
+}
+
+.insight-card__details summary {
+  color: var(--senus-green);
+  font-size: 0.8125rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.insight-card__details summary:focus-visible {
+  outline: 0.125rem solid var(--senus-teal);
+  outline-offset: 0.125rem;
 }
 
 .insight-card p {
