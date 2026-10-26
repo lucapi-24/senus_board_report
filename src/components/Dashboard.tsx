@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   ResponsiveContainer,
   BarChart,
@@ -71,6 +71,22 @@ function originLabel(origin?: string | null): string {
   return 'n/d'
 }
 
+function insightLoadError(error: unknown): AIInsight {
+  return {
+    section: 'Error',
+    insight: error instanceof Error
+      ? `Could not load saved insights: ${error.message}. Retry manually; the rest of the dashboard remains available.`
+      : 'Could not load saved insights. Retry manually; the rest of the dashboard remains available.',
+    data: null,
+    interpretation: null,
+    confidence: 0,
+    verified_claims: 0,
+    total_claims: 0,
+    sources: [],
+    evidence: [],
+  }
+}
+
 function negativeTone(value: number | null | undefined): 'neg' | undefined {
   return value != null && value < 0 ? 'neg' : undefined
 }
@@ -112,7 +128,7 @@ interface DashboardProps {
 export function Dashboard({ summary, selected }: DashboardProps) {
   const [detail, setDetail] = useState<PeriodDetail | null>(null)
   const [insights, setInsights] = useState<AIInsight[]>([])
-  const [insightsLoading, setInsightsLoading] = useState(false)
+  const [insightsLoading, setInsightsLoading] = useState(Boolean(selected))
   const [comparison, setComparison] = useState<PeriodCompareResult | null>(null)
   const [comparisonLoading, setComparisonLoading] = useState(false)
   const [compareSelection, setCompareSelection] = useState<{
@@ -120,27 +136,17 @@ export function Dashboard({ summary, selected }: DashboardProps) {
     label_b: string | null
   }>({ label_a: null, label_b: null })
 
-  const loadInsights = () => {
+  const loadInsights = useCallback(async (force = false) => {
     if (!selected) return
-    setInsightsLoading(true)
-    api
-      .insights(selected)
-      .then(setInsights)
-      .catch(() =>
-        setInsights([{
-          section: 'Error',
-          insight: 'Could not reach the AI service.',
-          data: null,
-          interpretation: null,
-          confidence: 0,
-          verified_claims: 0,
-          total_claims: 0,
-          sources: [],
-          evidence: [],
-        }]),
-      )
-      .finally(() => setInsightsLoading(false))
-  }
+    try {
+      const savedInsights = await api.insights(selected, force)
+      setInsights(savedInsights)
+    } catch (error) {
+      setInsights([insightLoadError(error)])
+    } finally {
+      setInsightsLoading(false)
+    }
+  }, [selected])
 
   const handleCompare = async () => {
     if (!compareSelection.label_a || !compareSelection.label_b || compareSelection.label_a === compareSelection.label_b) return
@@ -151,11 +157,25 @@ export function Dashboard({ summary, selected }: DashboardProps) {
         period_label_b: compareSelection.label_b,
       })
       setComparison(result)
-    } catch {
+    } catch (error) {
+      let message = error instanceof Error ? error.message : 'Comparison failed. Please try again.'
+      try {
+        const payload: unknown = JSON.parse(message)
+        if (
+          typeof payload === 'object' &&
+          payload !== null &&
+          'detail' in payload &&
+          typeof payload.detail === 'string'
+        ) {
+          message = payload.detail
+        }
+      } catch {
+        // Keep the original request error when it is not JSON.
+      }
       setComparison({
         label_a: compareSelection.label_a,
         label_b: compareSelection.label_b,
-        insight: 'Comparison failed. Please try again.',
+        insight: message,
         confidence: 0,
         data: null,
         interpretation: null,
@@ -184,10 +204,22 @@ export function Dashboard({ summary, selected }: DashboardProps) {
   }, [selected])
 
   useEffect(() => {
-    setInsights([])
-    setComparison(null)
-    setCompareSelection({ label_a: null, label_b: null })
-    loadInsights()
+    if (!selected) return
+    let active = true
+    api
+      .insights(selected)
+      .then((savedInsights) => {
+        if (active) setInsights(savedInsights)
+      })
+      .catch((error: unknown) => {
+        if (active) setInsights([insightLoadError(error)])
+      })
+      .finally(() => {
+        if (active) setInsightsLoading(false)
+      })
+    return () => {
+      active = false
+    }
   }, [selected])
 
   const current = useMemo(
@@ -922,9 +954,16 @@ export function Dashboard({ summary, selected }: DashboardProps) {
               <h2>Board Insights</h2>
               <p>Generated from {current?.period.label} financials using an LLM analyst.</p>
             </div>
-            <button className="btn btn-ghost" onClick={loadInsights} disabled={insightsLoading}>
+            <button
+              className="btn btn-ghost"
+              onClick={() => {
+                setInsightsLoading(true)
+                void loadInsights(true)
+              }}
+              disabled={insightsLoading}
+            >
               <RefreshCw size={16} className={insightsLoading ? 'spin' : ''} />
-              Regenerate
+              Retry / regenerate
             </button>
           </div>
 

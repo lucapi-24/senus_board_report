@@ -297,7 +297,8 @@ export const api = {
   summary: () => get<FinancialSummary[]>('/api/summary'),
   periodDetail: (label: string) => get<PeriodDetail>(`/api/periods/${label}`),
   kpis: (label: string) => get<KPIValue[]>(`/api/kpis/${label}`),
-  insights: (label: string) => get<AIInsight[]>(`/api/insights/${label}`),
+  insights: (label: string, force = false) =>
+    get<AIInsight[]>(`/api/insights/${label}${force ? '?force=true' : ''}`),
   comparePeriods: async (body: {
     period_label_a: string
     period_label_b: string

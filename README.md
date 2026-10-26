@@ -220,6 +220,16 @@ distintas y no acepta una comparación si no supera la verificación
 (`backend/app/services/ai_insights.py`, `backend/app/models/financial.py`,
 `src/components/Dashboard.tsx`).
 
+La generación de insights y comparaciones envía solo los KPIs disponibles y hasta
+18 líneas fuente en total, no todas las partidas ni páginas completas. Estima el
+tamaño de cada prompt para el log y reserva como máximo 800 tokens para la respuesta;
+solicita `reasoning_effort` `low` al modelo Groq GPT-OSS. Los insights ya persistidos se devuelven sin regenerar;
+el botón de reintento solicita generación explícita. Ante HTTP 413/429 se conserva el
+contenido existente, se informa del límite en la sección de insights y se permite
+reintentar manualmente; un encabezado de espera válido permite un único reintento
+automático (`backend/app/services/ai_insights.py`, `backend/app/api/financial.py`,
+`src/components/Dashboard.tsx`).
+
 ## Demo y datos reproducibles
 
 Hay fixtures extraídos para HY2026, HY2025 y el FY2025 parcial en
