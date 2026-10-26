@@ -279,6 +279,27 @@ def test_number_without_marker_is_rejected():
     assert "unmarked numeric value" in reason
 
 
+def test_interpretation_longer_than_two_sentences_is_rejected():
+    candidate = {
+        "section": "Revenue",
+        "data": "Revenue was {revenue}.",
+        "interpretation": "First sentence. Second sentence. Third sentence.",
+        "claims": [
+            {
+                "claim_text": "{revenue}",
+                "source_id": "kpi:revenue",
+                "value": 100,
+            }
+        ],
+        "evidence": [],
+    }
+
+    prepared, _, reason = ai_insights._prepare_marker_candidate(candidate, SOURCES)
+
+    assert prepared is None
+    assert "one or two sentences" in reason
+
+
 def test_multi_column_pdf_excerpt_keeps_current_period_value_only():
     source_index = {
         "pnl:Revenue": {
@@ -364,6 +385,8 @@ def test_insight_prompt_uses_compact_kpis_and_stays_within_free_tier_budget(monk
     assert len(facts) == 25
     assert "pnl:Revenue" not in prompt
     assert "irrelevant full-page text" not in prompt
+    assert "Use relevant available KPIs to explain relationships" in prompt
+    assert "one or two sentences" in prompt
     assert len(excerpts[5].splitlines()) <= ai_insights.MAX_PDF_EXCERPT_LINES
     assert estimated_prompt_tokens + ai_insights.INSIGHT_MAX_TOKENS < ai_insights.INSIGHT_TOKEN_BUDGET
     with caplog.at_level(logging.INFO, logger="app.services.ai_insights"):

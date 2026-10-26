@@ -481,7 +481,7 @@ Minimal source lines from the same period (page numbers are citations; do not in
 Return a JSON object with an "insights" array of 3-4 concise items. Each item must have:
 - "section": short topic
 - "data": concise factual supporting detail, using only markers such as {{ebitda_margin}} instead of writing figures
-- "interpretation": a concise explanation that uses markers such as {{gross_margin}} instead of writing figures
+- "interpretation": one or two concise sentences that use markers such as {{gross_margin}} instead of writing figures
 - "claims": one object per marker, each {{"claim_text": exact marker copied from data or interpretation, "source_id": exact available-fact source_id, "value": exact numeric source value}}
 - "evidence": optional exact PDF quotations as [{{"page": page_number, "quote": exact quote}}]
 
@@ -491,6 +491,8 @@ Rules:
 - Every marker must have exactly one claim with its matching source_id and exact numeric source value.
 - Cite only source IDs listed in Available KPIs. Never use unavailable facts or infer missing values.
 - Do not say why a metric changed, or attribute a cause, unless the entire causal sentence is quoted verbatim from a supplied excerpt and cited in evidence.
+- Use relevant available KPIs to explain relationships between metrics when helpful, such as gross margin alongside EBITDA margin; do not imply unsupported causation.
+- Keep the interpretation to one or two sentences. Prefer a concise relationship between the available figures over generic commentary.
 - Do not claim a contract, customer, cause, forecast, target, or event unless explicitly supported by these facts or quoted evidence.
 - Do not use confidence scores or add claims about other periods.
 - Keep the complete response concise enough to fit within the response token limit."""
@@ -623,6 +625,13 @@ def _prepare_marker_candidate(
         return None, {}, "insight has no structured numeric claims"
     if any(_numeric_mentions(text) for text in (section, data, interpretation)):
         return None, {}, "insight text contains an unmarked numeric value"
+    sentences = [
+        sentence.strip()
+        for sentence in re.split(r"(?<=[.!?])\s+", interpretation.strip())
+        if sentence.strip()
+    ]
+    if not 1 <= len(sentences) <= 2:
+        return None, {}, "interpretation must contain one or two sentences"
     available_markers = {
         source_id.removeprefix("kpi:"): source_id
         for source_id in source_index
