@@ -134,8 +134,11 @@ def test_comparison_verifies_claims_and_persists_cited_sources(monkeypatch):
         async def commit(self):
             pass
 
+    requests = []
+
     class FakeCompletions:
         async def create(self, **kwargs):
+            requests.append(kwargs)
             return SimpleNamespace(
                 choices=[
                     SimpleNamespace(
@@ -163,6 +166,16 @@ def test_comparison_verifies_claims_and_persists_cited_sources(monkeypatch):
     saved = json.loads(db.saved[0].sources_json)
     assert saved["version"] == 1
     assert {claim["period_label"] for claim in saved["claims"]} == {"HY2026", "HY2025"}
+    request_prompt = requests[0]["messages"][0]["content"]
+    assert "HY2026:kpi:revenue" in request_prompt
+    assert "HY2026:pnl:Revenue" not in request_prompt
+    assert requests[0]["max_tokens"] == ai_insights.INSIGHT_MAX_TOKENS
+    assert requests[0]["extra_body"]["reasoning_effort"] == "low"
+    assert (
+        ai_insights._estimate_prompt_tokens(request_prompt)
+        + requests[0]["max_tokens"]
+        < ai_insights.INSIGHT_TOKEN_BUDGET
+    )
 
 
 def test_comparison_rejects_number_that_does_not_match_source():

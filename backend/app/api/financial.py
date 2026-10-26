@@ -258,12 +258,13 @@ async def get_kpis(
 @router.get("/insights/{period_label}", response_model=List[AIInsight])
 async def get_ai_insights(
     period_label: str,
+    force: bool = Query(False),
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    """Get AI-generated insights for a period"""
+    """Return saved insights; regenerate only when explicitly requested."""
     from app.services.ai_insights import generate_insights
-    return await generate_insights(period_label, db)
+    return await generate_insights(period_label, db, force=force)
 
 
 @router.post("/insights/compare", response_model=PeriodCompareResponse)

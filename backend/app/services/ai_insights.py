@@ -38,6 +38,7 @@ logger = logging.getLogger(__name__)
 INSIGHT_MAX_TOKENS = 800
 INSIGHT_TOKEN_BUDGET = 8000
 INSIGHT_REASONING_EFFORT = "low"
+INSIGHT_PERCENT_DECIMAL_PLACES = 1
 MAX_PDF_EXCERPT_LINES = 18
 
 client = AsyncOpenAI(
@@ -46,6 +47,7 @@ client = AsyncOpenAI(
 ) if settings.GROQ_API_KEY else None
 
 _NUMBER_RE = re.compile(r"(?<![A-Za-z0-9])[-+]?\d[\d,]*(?:\.\d+)?(?![A-Za-z0-9])")
+_INSIGHT_MARKER_RE = re.compile(r"\{([A-Za-z][A-Za-z0-9_]*)\}")
 _CAUSAL_RE = re.compile(
     r"\b(?:because|due to|cause[sd]? by|caus(?:e|es|ed|ing)|"
     r"drive|drives|drove|driven|driving|as a result of|as a consequence of|"
@@ -244,6 +246,7 @@ def _insight_prompt_facts(
     """Keep model context to available period KPIs, not statement line items."""
     return [
         {
+            "marker": key.removeprefix("kpi:"),
             "source_id": source["source_id"],
             "label": source["label"],
             "value": source["value"],
@@ -302,7 +305,7 @@ def _insight_pdf_excerpts(
                     and any(char.isdigit() for char in page_lines[index + 1])
                 ):
                     continuation = page_lines[index + 1]
-                    if continuation not in excerpts                     and total_lines < max_lines:
+                    if continuation not in excerpts and total_lines < max_lines:
                         excerpts.append(continuation)
                         total_lines += 1
     return {
@@ -343,16 +346,19 @@ Minimal source lines from the same period (page numbers are citations; do not in
 
 Return a JSON object with an "insights" array of 3-4 concise items. Each item must have:
 - "section": short topic
-- "data": factual statement using only available financial facts
-- "interpretation": a cautious interpretation, or an empty string
-- "claims": one object per numeric claim in the text, each {{"claim_text": exact numeric text copied from data or interpretation, "source_id": exact available-fact source_id, "value": numeric value}}
+- "data": concise factual supporting detail, using only markers such as {{ebitda_margin}} instead of writing figures
+- "interpretation": one or two concise sentences that use markers such as {{gross_margin}} instead of writing figures
+- "claims": one object per marker, each {{"claim_text": exact marker copied from data or interpretation, "source_id": exact available-fact source_id, "value": exact numeric source value}}
 - "evidence": optional exact PDF quotations as [{{"page": page_number, "quote": exact quote}}]
 
 Rules:
-- Every numeric value in data or interpretation must match a cited claim's source and value. Do not write numbers as words.
+- Never write numeric digits in section, data, or interpretation; use a marker from the Available KPIs list for every figure.
+- Marker names are the listed KPI identifiers without the "kpi:" prefix. Never invent a marker.
+- Every marker must have exactly one claim with its matching source_id and exact numeric source value.
 - Cite only source IDs listed in Available KPIs. Never use unavailable facts or infer missing values.
 - Do not say why a metric changed, or attribute a cause, unless the entire causal sentence is quoted verbatim from a supplied excerpt and cited in evidence.
-- Distinguish reported facts from interpretation. Do not claim a contract, customer, cause, forecast, target, or event unless explicitly supported by these facts or quoted evidence.
+- Use relevant available KPIs to explain relationships between metrics when helpful; do not imply unsupported causation.
+- Do not claim a contract, customer, cause, forecast, target, or event unless explicitly supported by these facts or quoted evidence.
 - Do not use confidence scores or add claims about other periods.
 - Keep the complete response concise enough to fit within the response token limit."""
 
@@ -467,6 +473,155 @@ def _provider_error_insight(
         *existing,
         AIInsight(section=section, insight=message),
     ]
+
+
+def _prepare_marker_candidate(
+    candidate: Dict[str, Any],
+    source_index: Dict[str, Dict[str, Any]],
+) -> Tuple[Optional[Dict[str, Any]], Dict[str, str], str]:
+    """Expand model markers to exact source values before existing verification."""
+    section = candidate.get("section")
+    data = candidate.get("data")
+    interpretation = candidate.get("interpretation")
+    claims = candidate.get("claims")
+    if not all(isinstance(value, str) for value in (section, data, interpretation)):
+        return None, {}, "missing required insight text fields"
+    if not isinstance(claims, list) or not claims:
+        return None, {}, "insight has no structured numeric claims"
+    if any(_numeric_mentions(text) for text in (section, data, interpretation)):
+        return None, {}, "insight text contains an unmarked numeric value"
+    available_markers = {
+        source_id.removeprefix("kpi:"): source_id
+        for source_id in source_index
+        if source_id.startswith("kpi:")
+    }
+    original_text = f"{section}\n{data}\n{interpretation}"
+    markers = set(_INSIGHT_MARKER_RE.findall(original_text))
+    braced_values = re.findall(r"\{[^{}]*\}", original_text)
+    if any(not _INSIGHT_MARKER_RE.fullmatch(value) for value in braced_values):
+        return None, {}, "insight contains a malformed or unsupported marker"
+    if not markers or markers - available_markers.keys():
+        return None, {}, "insight references a missing or unavailable marker"
+
+    marker_claims: Dict[str, Dict[str, Any]] = {}
+    for claim in claims:
+        if not isinstance(claim, dict):
+            return None, {}, "claim is not an object"
+        claim_text = claim.get("claim_text")
+        source_id = claim.get("source_id")
+        marker_match = _INSIGHT_MARKER_RE.fullmatch(claim_text) if isinstance(claim_text, str) else None
+        if not marker_match:
+            return None, {}, "claim must reference its source with a marker"
+        marker = marker_match.group(1)
+        if marker not in available_markers or available_markers[marker] != source_id:
+            return None, {}, "claim marker does not match its source"
+        if marker in marker_claims:
+            return None, {}, "insight contains duplicate claims for a marker"
+        marker_claims[marker] = claim
+    if markers != marker_claims.keys():
+        return None, {}, "every insight marker must have exactly one claim"
+
+    marker_values = {
+        marker: _format_source_value(source_index[source_id])
+        for marker, source_id in available_markers.items()
+        if marker in markers
+    }
+    exact_values = {
+        marker: repr(float(source_index[available_markers[marker]]["value"]))
+        for marker in markers
+    }
+
+    def replace_markers(text: str, replacements: Dict[str, str]) -> str:
+        return _INSIGHT_MARKER_RE.sub(
+            lambda match: replacements[match.group(1)],
+            text,
+        )
+
+    prepared = dict(candidate)
+    prepared["section"] = replace_markers(section, exact_values)
+    prepared["data"] = replace_markers(data, exact_values)
+    prepared["interpretation"] = replace_markers(interpretation, exact_values)
+    prepared["claims"] = [
+        {
+            **claim,
+            "claim_text": exact_values[marker],
+        }
+        for marker, claim in marker_claims.items()
+    ]
+    return prepared, marker_values, ""
+
+
+def _format_source_value(source: Dict[str, Any]) -> str:
+    source_id = source["source_id"]
+    if not source_id.startswith("kpi:"):
+        return _format_money(float(source["value"]))
+    spec = CATALOG_BY_KEY.get(source_id.removeprefix("kpi:"))
+    unit = str(spec.get("unit", "")) if spec else ""
+    value = float(source["value"])
+    if unit == "%":
+        return f"{value:.{INSIGHT_PERCENT_DECIMAL_PLACES}f}%"
+    if unit == "EUR":
+        return _format_money(value)
+    if unit == "x":
+        return f"{value:.2f}x"
+    if unit == "months":
+        return f"{value:.1f} months"
+    if unit == "count":
+        return f"{value:,.0f}"
+    return f"{value:,.2f}"
+
+
+def _render_verified_candidate(
+    verified: AIInsight,
+    candidate: Dict[str, Any],
+    marker_values: Dict[str, str],
+    period_label: str,
+) -> AIInsight:
+    def render(text: Optional[str]) -> Optional[str]:
+        if text is None:
+            return None
+        return _INSIGHT_MARKER_RE.sub(
+            lambda match: marker_values[match.group(1)],
+            text,
+        )
+
+    original_claims = {
+        claim["source_id"]: claim["claim_text"]
+        for claim in candidate["claims"]
+    }
+    sources = [
+        source.model_copy(
+            update={
+                "claim_text": marker_values[
+                    original_claims[source.source_id][1:-1]
+                ]
+            }
+        )
+        for source in verified.sources
+    ]
+    evidence = [
+        item.model_copy(update={"period_label": item.period_label or period_label})
+        for item in verified.evidence
+    ]
+    data = render(candidate.get("data")) or ""
+    interpretation = render(candidate.get("interpretation"))
+    combined = "\n".join(
+        part
+        for part in (
+            f"Data: {data}",
+            f"Interpretation: {interpretation}" if interpretation else "",
+        )
+        if part
+    )
+    return verified.model_copy(
+        update={
+            "insight": combined,
+            "data": data,
+            "interpretation": interpretation,
+            "sources": sources,
+            "evidence": evidence,
+        }
+    )
 
 
 def _validate_candidate(
@@ -722,7 +877,25 @@ async def generate_insights(
         if not isinstance(candidate, dict):
             logger.warning("Discarding malformed insight for period %s", period.label)
             continue
-        insight, reason = _validate_candidate(candidate, source_index, supplied_pages)
+        prepared, marker_values, reason = _prepare_marker_candidate(
+            candidate,
+            source_index,
+        )
+        if prepared is None:
+            insight = None
+        else:
+            insight, reason = _validate_candidate(
+                prepared,
+                source_index,
+                supplied_pages,
+            )
+            if insight is not None:
+                insight = _render_verified_candidate(
+                    insight,
+                    candidate,
+                    marker_values,
+                    period.label,
+                )
         if insight is None:
             logger.warning(
                 "Discarding unverifiable insight for period %s (%s)",

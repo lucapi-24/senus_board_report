@@ -102,10 +102,10 @@ def test_validated_insight_is_persisted_with_sources(monkeypatch):
     )
     candidate = {
         "section": "Revenue",
-        "data": "Revenue was €100.",
-        "interpretation": "",
+        "data": "Revenue was {revenue}.",
+        "interpretation": "This is a reported figure.",
         "claims": [
-            {"claim_text": "€100", "source_id": "kpi:revenue", "value": 100}
+            {"claim_text": "{revenue}", "source_id": "kpi:revenue", "value": 100}
         ],
         "evidence": [],
     }
@@ -165,11 +165,118 @@ def test_validated_insight_is_persisted_with_sources(monkeypatch):
 
     assert len(result) == 1
     assert result[0].sources[0].label == "Revenue"
+    assert result[0].data == "Revenue was €100."
+    assert result[0].sources[0].claim_text == "€100"
+    assert result[0].sources[0].value == 100
     assert len(database.saved) == 1
     saved_sources = json.loads(database.saved[0].sources_json)
     assert saved_sources["version"] == 1
     assert saved_sources["claims"][0]["source_id"] == "kpi:revenue"
     assert saved_sources["claims"][0]["verified"] is True
+
+
+def test_marker_value_is_formatted_after_exact_source_verification():
+    sources = {
+        "kpi:ebitda_margin": {
+            "source_id": "kpi:ebitda_margin",
+            "label": "EBITDA margin",
+            "value": -133.51793761784376,
+            "origin": "derived",
+            "formula": "(Group operating loss + Depreciation) / Revenue × 100",
+            "pages": [5],
+            "source_note": None,
+        }
+    }
+    candidate = {
+        "section": "EBITDA margin",
+        "data": "EBITDA margin was {ebitda_margin}.",
+        "interpretation": "This indicates the operating result exceeded revenue.",
+        "claims": [
+            {
+                "claim_text": "{ebitda_margin}",
+                "source_id": "kpi:ebitda_margin",
+                "value": -133.51793761784376,
+            }
+        ],
+        "evidence": [],
+    }
+
+    prepared, marker_values, reason = ai_insights._prepare_marker_candidate(
+        candidate,
+        sources,
+    )
+    assert reason == ""
+    assert prepared is not None
+    verified, reason = _validate_candidate(prepared, sources, {})
+    assert reason == ""
+    assert verified is not None
+
+    rendered = ai_insights._render_verified_candidate(
+        verified,
+        candidate,
+        marker_values,
+        "HY2026",
+    )
+
+    assert rendered.data == "EBITDA margin was -133.5%."
+    assert rendered.sources[0].value == sources["kpi:ebitda_margin"]["value"]
+    assert rendered.sources[0].claim_text == "-133.5%"
+
+
+def test_marker_formats_euros_and_ratios_without_changing_source_values():
+    euro_source = {
+        "source_id": "kpi:revenue",
+        "value": 354813.42,
+    }
+    ratio_source = {
+        "source_id": "kpi:current_ratio",
+        "value": 2.38524173,
+    }
+
+    assert ai_insights._format_source_value(euro_source) == "€354,813"
+    assert ai_insights._format_source_value(ratio_source) == "2.39x"
+
+
+def test_missing_marker_is_rejected():
+    candidate = {
+        "section": "Revenue",
+        "data": "Revenue was {unknown_metric}.",
+        "interpretation": "The figure is reported.",
+        "claims": [
+            {
+                "claim_text": "{unknown_metric}",
+                "source_id": "kpi:revenue",
+                "value": 100,
+            }
+        ],
+        "evidence": [],
+    }
+
+    prepared, _, reason = ai_insights._prepare_marker_candidate(candidate, SOURCES)
+
+    assert prepared is None
+    assert "missing or unavailable marker" in reason
+
+
+def test_number_without_marker_is_rejected():
+    candidate = {
+        "section": "Revenue",
+        "data": "Revenue was €100.",
+        "interpretation": "The figure is reported.",
+        "claims": [
+            {
+                "claim_text": "{revenue}",
+                "source_id": "kpi:revenue",
+                "value": 100,
+            }
+        ],
+        "evidence": [],
+    }
+
+    prepared, _, reason = ai_insights._prepare_marker_candidate(candidate, SOURCES)
+
+    assert prepared is None
+    assert "unmarked numeric value" in reason
 
 
 def test_insight_prompt_uses_compact_kpis_and_stays_within_free_tier_budget(monkeypatch, caplog):
