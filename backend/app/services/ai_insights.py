@@ -479,7 +479,7 @@ Minimal source lines from the same period (page numbers are citations; do not in
 {serialized_excerpts}
 
 Return a JSON object with an "insights" array of 3-4 concise items. Each item must have:
-- "section": short topic
+- "section": short topic without numeric markers or figures
 - "data": concise factual supporting detail, using only markers such as {{ebitda_margin}} instead of writing figures
 - "interpretation": one or two concise sentences that use markers such as {{gross_margin}} instead of writing figures
 - "claims": one object per marker, each {{"claim_text": exact marker copied from data or interpretation, "source_id": exact available-fact source_id, "value": exact numeric source value}}
@@ -638,6 +638,8 @@ def _prepare_marker_candidate(
         if source_id.startswith("kpi:")
     }
     original_text = f"{section}\n{data}\n{interpretation}"
+    if _INSIGHT_MARKER_RE.search(section):
+        return None, {}, "section must not contain numeric markers"
     markers = set(_INSIGHT_MARKER_RE.findall(original_text))
     braced_values = re.findall(r"\{[^{}]*\}", original_text)
     if any(not _INSIGHT_MARKER_RE.fullmatch(value) for value in braced_values):

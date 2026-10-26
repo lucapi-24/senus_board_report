@@ -258,6 +258,27 @@ def test_missing_marker_is_rejected():
     assert "missing or unavailable marker" in reason
 
 
+def test_marker_in_title_is_rejected():
+    candidate = {
+        "section": "Revenue {revenue}",
+        "data": "Revenue was {revenue}.",
+        "interpretation": "The figure is reported.",
+        "claims": [
+            {
+                "claim_text": "{revenue}",
+                "source_id": "kpi:revenue",
+                "value": 100,
+            }
+        ],
+        "evidence": [],
+    }
+
+    prepared, _, reason = ai_insights._prepare_marker_candidate(candidate, SOURCES)
+
+    assert prepared is None
+    assert "section must not contain numeric markers" in reason
+
+
 def test_number_without_marker_is_rejected():
     candidate = {
         "section": "Revenue",
