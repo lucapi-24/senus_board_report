@@ -18,6 +18,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from app.services.llm_extract import STATEMENTS, StatementLine, parse_value, value_candidates
+from app.services.deterministic import normalize_line_sign
 from app.services.validation import check_results
 
 TOLERANCE = 1.0
@@ -245,6 +246,11 @@ def _llm_map(statement: str, llm_lines: Sequence[StatementLine]) -> Dict[str, tu
         if line.statement != statement:
             continue
         canon = canonical_label(statement, line.line_item)
+        raw_value = line.value
+        line.value = float(normalize_line_sign(statement, canon, line.value))
+        if line.value != raw_value:
+            line.meta["raw_value"] = raw_value
+            line.meta["sign_normalized"] = True
         out[_key(canon)] = (canon, line)
     return out
 

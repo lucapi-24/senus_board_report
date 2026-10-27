@@ -14,9 +14,14 @@ _SCRIPTS = Path(__file__).resolve().parents[2] / "scripts"
 if str(_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS))
 
-from extract_pdf import clean_number, compute_kpis, extract_from_text  # noqa: E402
+from extract_pdf import (  # noqa: E402
+    clean_number,
+    compute_kpis,
+    extract_from_text,
+    normalize_line_sign,
+)
 
-__all__ = ["clean_number", "compute_kpis", "extract_from_text"]
+__all__ = ["clean_number", "compute_kpis", "extract_from_text", "normalize_line_sign"]
 
 
 def parse_tables(pages, column: int = 0) -> Dict[str, Any]:

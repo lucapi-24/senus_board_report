@@ -123,6 +123,17 @@ def test_value_and_sign_mismatches_expose_both_values():
     assert items["Interest payable"].status == "sign_mismatch"
 
 
+def test_llm_loss_sign_uses_the_deterministic_parser_convention():
+    deterministic = {"pnl": {"Group operating loss": "-405577"}}
+    line = StatementLine("pnl", "Group operating loss", 405577, 5)
+
+    item = _by_label(reconcile(deterministic, [line]), "pnl")["Group operating loss"]
+
+    assert item.status == "matched"
+    assert item.llm_value == -405577.0
+    assert line.meta == {"raw_value": 405577, "sign_normalized": True}
+
+
 def test_single_source_labels_are_flagged():
     det = {"cash_flow": {"EBITDA": "-473739"}}
     llm = [StatementLine("cash_flow", "Net cash used in operating activities", -410291, 6)]

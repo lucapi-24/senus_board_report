@@ -178,15 +178,32 @@ def extract_from_text(full_text: str, column: int = 0, pages=None) -> Dict[str, 
     return result
 
 
+def normalize_line_sign(statement: str, line_item: str, value: Decimal | float) -> Decimal | float:
+    """Apply the same sign conventions to one extracted value as the parser."""
+    if statement == "pnl" and line_item in {
+        "Group operating loss",
+        "Loss before taxation",
+        "Loss for the period",
+    } and value > 0:
+        return -value
+    if statement == "cash_flow" and line_item == "Loss for the period" and value > 0:
+        return -value
+    return value
+
+
 def _normalise_loss_signs(result: Dict[str, Any]) -> None:
     """Normalise loss line items to negative values as printed in the document."""
     for key in ("Group operating loss", "Loss before taxation", "Loss for the period"):
-        if key in result["pnl"] and result["pnl"][key] > 0:
-            result["pnl"][key] = -result["pnl"][key]
+        if key in result["pnl"]:
+            result["pnl"][key] = normalize_line_sign("pnl", key, result["pnl"][key])
     # Cash flow also carries Loss for the period; normalise it too so derived
     # subtotals (EBITDA) compute correctly.
-    if "Loss for the period" in result["cash_flow"] and result["cash_flow"]["Loss for the period"] > 0:
-        result["cash_flow"]["Loss for the period"] = -result["cash_flow"]["Loss for the period"]
+    if "Loss for the period" in result["cash_flow"]:
+        result["cash_flow"]["Loss for the period"] = normalize_line_sign(
+            "cash_flow",
+            "Loss for the period",
+            result["cash_flow"]["Loss for the period"],
+        )
 
 
 async def extract_narrative_insights(full_text: str, period_label: str) -> Dict[str, str]:
