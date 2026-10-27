@@ -189,6 +189,17 @@ export interface ReviewPayload {
   balance_sheet: ReconciledItem[]
   cash_flow: ReconciledItem[]
   summary: { matched: number; flagged: number; total: number }
+  note_warnings?: NoteWarning[]
+}
+
+export interface NoteWarning {
+  statement: FinancialStatement
+  line_item: string
+  table_value: number
+  note_value: number
+  page: number
+  quote: string
+  message: string
 }
 
 export interface DocumentSummary {

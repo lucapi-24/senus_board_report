@@ -43,6 +43,18 @@ def test_proposal_exposes_both_values_and_counts():
     assert proposal["summary"]["flagged"] >= 1
 
 
+def test_llm_only_item_is_reviewable_but_excluded_from_kpis():
+    result = reconcile(
+        {},
+        [StatementLine("pnl", "Other exceptional charge", 1250, 5)],
+        pages=[(5, "Other exceptional charge 1,250")],
+    )
+    item = result["pnl"][0]
+
+    assert item.status == "llm_only"
+    assert _chosen(result)["pnl"] == {}
+
+
 def test_months_between():
     assert _months_between(date(2025, 7, 1), date(2025, 12, 31)) == 6
     assert _months_between(date(2024, 7, 1), date(2025, 6, 30)) == 12

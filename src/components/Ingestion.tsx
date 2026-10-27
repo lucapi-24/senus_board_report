@@ -293,7 +293,7 @@ export function Ingestion({ role, onDataChanged }: { role?: string; onDataChange
 
   const pending = period
     ? [...period.pnl, ...period.balance_sheet, ...period.cash_flow].filter(
-        (i) => i.review_status === 'flagged',
+        (i) => i.review_status === 'flagged' || i.review_status === 'llm_only',
       ).length
     : 0
   const review = period
@@ -648,6 +648,19 @@ export function Ingestion({ role, onDataChanged }: { role?: string; onDataChange
                   )}
                 </div>
               </div>
+
+              {review.note_warnings?.length ? (
+                <div className="callout callout--error" role="alert">
+                  <strong>Statement and note figures need review:</strong>
+                  <ul>
+                    {review.note_warnings.map((warning, index) => (
+                      <li key={`${warning.line_item}-${warning.page}-${index}`}>
+                        {warning.message} Source: “{warning.quote}”
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
 
               {(['pnl', 'balance_sheet', 'cash_flow'] as const).map((statement) => {
                 const merged = merge(review![statement], period[statement], statement)

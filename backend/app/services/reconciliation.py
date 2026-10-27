@@ -361,4 +361,6 @@ def reconcile(
 
 def review_status_for(status: str) -> str:
     """Map a reconciliation status to a persisted ``review_status`` value."""
+    if status == "llm_only":
+        return "llm_only"
     return "reported" if status == "matched" else "flagged"

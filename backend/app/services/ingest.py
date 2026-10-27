@@ -33,6 +33,7 @@ from app.services import lifecycle
 from app.services.deterministic import compute_kpis, parse_tables
 from app.services.llm_extract import STATEMENTS, extract_structured
 from app.services.metrics import CATALOG_BY_KEY, kpi_metadata
+from app.services.note_crosscheck import find_note_mismatches
 from app.services.period_detector import get_column_for_period, period_duration_months
 from app.services.reconciliation import reconcile, review_status_for
 from app.services.validation import validate_period
@@ -98,7 +99,7 @@ def _chosen(result: Dict[str, Any]) -> Dict[str, Dict[str, float]]:
         chosen[statement] = {
             item.line_item: float(item.value)
             for item in result[statement]
-            if item.value is not None
+            if item.value is not None and item.status != "llm_only"
         }
     return chosen
 
@@ -346,6 +347,17 @@ async def ingest_document(
         llm_result = await extract_structured(pages, use_label or "", column=use_column)
         result = reconcile(tables, llm_result.lines, pages=pages)
         proposal = build_proposal(result, llm_result.trace)
+        statement_pages = {
+            page
+            for pages_by_item in (tables.get("provenance") or {}).values()
+            for page in pages_by_item.values()
+            if page
+        }
+        proposal["note_warnings"] = find_note_mismatches(
+            pages,
+            statement_pages,
+            tables,
+        )
         await _persist(
             db,
             doc,
