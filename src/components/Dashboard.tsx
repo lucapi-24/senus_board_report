@@ -1032,31 +1032,13 @@ export function Dashboard({ summary, selected }: DashboardProps) {
                           {source.pdf_excerpts.map((excerpt, excerptIndex) => (
                             <small key={`${source.source_id}-excerpt-${excerptIndex}`}>
                               {excerpt.period_label ?? selected}, PDF p. {excerpt.page}: “{excerpt.quote}”
-                              <button
-                                className="btn btn-ghost"
-                                type="button"
-                                aria-label={`Abrir ${excerpt.period_label ?? selected} en página ${excerpt.page} del PDF fuente`}
-                                disabled={detail?.source_doc_id == null}
-                                onClick={() => void openSourcePage(excerpt.page)}
-                              >
-                                Abrir página
-                              </button>
                             </small>
                           ))}
                           {source.pages.length > 0 && (
                             <small>
-                              {source.pages.map((page) => (
-                                <button
-                                  key={`${source.source_id}-page-${page}`}
-                                  className="btn btn-ghost"
-                                  type="button"
-                                  aria-label={`Abrir ${source.period_label ?? selected} en página ${page} del PDF fuente`}
-                                  disabled={detail?.source_doc_id == null}
-                                  onClick={() => void openSourcePage(page)}
-                                >
-                                  {source.period_label ?? selected}, PDF p. {page}
-                                </button>
-                              ))}
+                              {source.pages
+                                .map((page) => `${source.period_label ?? selected}, PDF p. ${page}`)
+                                .join(' · ')}
                             </small>
                           )}
                         </li>
@@ -1066,15 +1048,6 @@ export function Dashboard({ summary, selected }: DashboardProps) {
                           <span>
                             {item.period_label ?? selected}, PDF p. {item.page}: “{item.quote}”
                           </span>
-                          <button
-                            className="btn btn-ghost"
-                            type="button"
-                            aria-label={`Abrir ${item.period_label ?? selected} en página ${item.page} del PDF fuente`}
-                            disabled={detail?.source_doc_id == null}
-                            onClick={() => void openSourcePage(item.page)}
-                          >
-                            Abrir página
-                          </button>
                         </li>
                       ))}
                     </ul>
