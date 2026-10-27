@@ -62,6 +62,29 @@ def test_normalization_records_discarded_entries_with_reasons():
     ]
 
 
+@pytest.mark.parametrize("numeric_label", ["951,321", "923,339", "-473,739"])
+def test_normalization_discards_numeric_labels_as_unlabelled_subtotals(
+    numeric_label,
+):
+    lines, discarded = normalize_payload_with_discarded(
+        {
+            "balance_sheet": [
+                {
+                    "line_item": numeric_label,
+                    "value": 951321,
+                    "page": 5,
+                    "column": 0,
+                }
+            ]
+        },
+        expected_column=0,
+    )
+
+    assert lines == []
+    assert discarded[0]["line_item"] == numeric_label
+    assert discarded[0]["reason"] == "unlabelled_subtotal_label"
+
+
 def test_normalization_records_unrecognized_statement_sections():
     lines, discarded = normalize_payload_with_discarded(
         {"financial_position": [{"line_item": "Assets", "value": 500, "page": 5}]}

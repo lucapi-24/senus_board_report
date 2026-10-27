@@ -144,11 +144,23 @@ def normalize_payload_with_discarded(
                     {"statement": statement, "reason": "missing_label", "entry": entry}
                 )
                 continue
+            label_text = str(label).strip()
+            if NUMERIC_LABEL_RE.fullmatch(label_text):
+                discarded.append(
+                    {
+                        "statement": statement,
+                        "line_item": label_text,
+                        "value": value,
+                        "reason": "unlabelled_subtotal_label",
+                        "entry": entry,
+                    }
+                )
+                continue
             if value is None:
                 discarded.append(
                     {
                         "statement": statement,
-                        "line_item": str(label).strip(),
+                        "line_item": label_text,
                         "reason": "invalid_value",
                         "entry": entry,
                     }
@@ -206,7 +218,7 @@ def normalize_payload_with_discarded(
             lines.append(
                 StatementLine(
                     statement=statement,
-                    line_item=str(label).strip(),
+                    line_item=label_text,
                     value=value,
                     page=page,
                     source_text=str(
@@ -247,6 +259,7 @@ def _has_any_statement_heading(text: str) -> bool:
 
 
 NUMBER_TOKEN_RE = re.compile(r"(?<![\w])(?:\(?-?\d[\d,]*(?:\.\d+)?\)?)(?![\w])")
+NUMERIC_LABEL_RE = re.compile(r"[€£$]?\s*-?\(?\d[\d,]*(?:\.\d+)?\)?")
 UNLABELLED_TOTAL_ANCHORS = {
     "Total Fixed Assets": "Tangible Assets",
     "Total Current Assets": "Cash and cash equivalents",
