@@ -83,7 +83,11 @@ def test_expected_coverage_excludes_unlabelled_balance_subtotals():
                 "Total Current Assets": "923339",
             }
         },
-        [StatementLine("balance_sheet", "Goodwill", 669550, 5)],
+        [
+            StatementLine("balance_sheet", "Goodwill", 669550, 5),
+            StatementLine("balance_sheet", "Total Fixed Assets", 951321, 5),
+            StatementLine("balance_sheet", "Total Current Assets", 923339, 5),
+        ],
     )
 
     grounded_count, missing_expected = _expected_llm_coverage(result)

@@ -126,6 +126,10 @@ def _expected_llm_coverage(
 ) -> Tuple[int, Dict[str, List[str]]]:
     grounded_count = sum(
         item.source == "both"
+        and not (
+            statement == "balance_sheet"
+            and item.line_item in BALANCE_SUBTOTALS
+        )
         for statement in STATEMENTS
         for item in result[statement]
     )
