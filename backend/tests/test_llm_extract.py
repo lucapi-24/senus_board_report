@@ -408,6 +408,34 @@ def test_partial_response_is_warned_and_reported():
     assert "1 partidas fundamentadas de 2 esperadas" in result.trace["warning"]
 
 
+def test_discarded_extra_item_does_not_make_complete_coverage_partial():
+    client = _fake_client(
+        json.dumps(
+            {
+                "pnl": [
+                    {"line_item": "Revenue", "value": 100, "page": 5},
+                    {"line_item": "Made up", "value": 999, "page": 5},
+                ]
+            }
+        )
+    )
+
+    result = asyncio.run(
+        extract_structured(
+            [(5, "Revenue 100")],
+            "HY2026",
+            client=client,
+            expected_count=1,
+            sleep=_no_sleep,
+            reserve_budget=_no_reserve,
+        )
+    )
+
+    assert result.trace["status"] == "ok"
+    assert result.trace["accepted_count"] == 1
+    assert result.trace["discarded_count"] == 1
+
+
 async def _no_sleep(_seconds):
     return None
 

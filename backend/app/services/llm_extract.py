@@ -852,13 +852,13 @@ async def extract_structured(
         trace["warning"] = (
             "LLM no disponible: no devolvió cifras fundamentadas; se usará solo regex."
         )
-    elif discarded or (expected_count is not None and len(grounded) < expected_count):
+    elif expected_count is not None and len(grounded) < expected_count:
         missing_count = max((expected_count or 0) - len(grounded), 0)
         trace["status"] = "partial"
         trace["warning"] = (
             f"LLM devolvió {len(grounded)} partidas fundamentadas de "
             f"{expected_count if expected_count is not None else len(normalized)} esperadas; "
-            f"{len(discarded)} descartadas y {missing_count} ausentes."
+            f"{missing_count} ausentes."
         )
     logger.info(
         "LLM extraction result model=%s period=%s latency_ms=%s "

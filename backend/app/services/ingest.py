@@ -409,7 +409,13 @@ async def ingest_document(
         item_origins, subtotal_warnings = resolve_unlabelled_subtotals(tables)
         other_column_tables = parse_tables(pages, column=1 - use_column)
         expected_count = sum(
-            len(tables.get(statement, {}) or {}) for statement in STATEMENTS
+            1
+            for statement in STATEMENTS
+            for label in (tables.get(statement, {}) or {})
+            if not (
+                statement == "balance_sheet"
+                and label in BALANCE_SUBTOTALS
+            )
         )
         expected_items: Dict[str, Dict[str, Dict[str, Any]]] = {}
         other_column_items: Dict[str, Dict[str, float]] = {}
