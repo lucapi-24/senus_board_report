@@ -29,6 +29,7 @@ from app.schemas.financial import (
 )
 from app.core.config import settings
 from app.services.metrics import CATALOG_BY_KEY, kpi_metadata, require_same_period_duration
+from app.services.llm_extract import reserve_token_budget
 from app.services.period_detector import period_duration_months
 from openai import AsyncOpenAI
 
@@ -552,6 +553,7 @@ async def _request_insights(prompt: str, period_label: str) -> Any:
 
     last_error: Optional[Exception] = None
     for attempt in range(2):
+        await reserve_token_budget(prompt_tokens + INSIGHT_MAX_TOKENS)
         try:
             return await client.chat.completions.create(
                 model=settings.GROQ_MODEL,

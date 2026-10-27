@@ -3,11 +3,14 @@ import json
 
 from app.services.llm_extract import (
     StatementLine,
+    _TOKEN_RESERVATIONS,
     extract_structured,
     ground_items,
     normalize_payload,
     normalize_payload_with_discarded,
     parse_value,
+    reserve_token_budget,
+    select_statement_pages,
 )
 
 
@@ -104,9 +107,11 @@ def _fake_client(content: str, errors=None):
 
     class _Completions:
         calls = 0
+        last_kwargs = None
 
         async def create(self, *args, **kwargs):
             self.calls += 1
+            self.last_kwargs = kwargs
             if errors:
                 error = errors.pop(0)
                 raise error
@@ -117,6 +122,7 @@ def _fake_client(content: str, errors=None):
 
     client = type("Client", (), {"chat": _Chat()})()
     client.calls = lambda: client.chat.completions.calls
+    client.last_kwargs = lambda: client.chat.completions.last_kwargs
     return client
 
 
@@ -130,7 +136,14 @@ def test_extract_structured_returns_only_grounded_lines():
         }
     )
     pages = [(5, "Revenue 354,813")]
-    result = asyncio.run(extract_structured(pages, "HY2026", client=_fake_client(content)))
+    result = asyncio.run(
+        extract_structured(
+            pages,
+            "HY2026",
+            client=_fake_client(content),
+            reserve_budget=_no_reserve,
+        )
+    )
     assert [line.line_item for line in result.lines] == ["Revenue"]
     assert result.lines[0].grounded is True
     assert result.trace["accepted_count"] == 1
@@ -157,6 +170,7 @@ def test_413_is_not_retried_and_falls_back_to_regex():
             "HY2026",
             client=client,
             sleep=_no_sleep,
+            reserve_budget=_no_reserve,
         )
     )
 
@@ -188,6 +202,7 @@ def test_429_waits_for_retry_after_before_retrying():
             "HY2026",
             client=client,
             sleep=record_wait,
+            reserve_budget=_no_reserve,
         )
     )
 
@@ -205,6 +220,7 @@ def test_invalid_json_falls_back_without_retrying():
             "HY2026",
             client=client,
             sleep=_no_sleep,
+            reserve_budget=_no_reserve,
         )
     )
 
@@ -225,6 +241,7 @@ def test_partial_response_is_warned_and_reported():
             client=client,
             expected_count=2,
             sleep=_no_sleep,
+            reserve_budget=_no_reserve,
         )
     )
 
@@ -234,3 +251,65 @@ def test_partial_response_is_warned_and_reported():
 
 async def _no_sleep(_seconds):
     return None
+
+
+async def _no_reserve(_tokens, **_kwargs):
+    return 0.0
+
+
+def test_statement_page_selection_excludes_narrative_and_notes():
+    pages = [
+        (1, "Revenue improved and cash flows from trading grew."),
+        (5, "Consolidated Profit and Loss Account\nRevenue 100"),
+        (6, "Consolidated cash flow statement\nCash used in operations (10)"),
+        (7, "Payments to acquire intangible assets (20)"),
+        (8, "Notes to the accounts\nGoodwill of €669,500."),
+    ]
+
+    selected = select_statement_pages(pages, {"provenance": {}})
+
+    assert [page for page, _text in selected] == [5, 6, 7]
+
+
+def test_prompt_budget_and_reasoning_effort_are_constrained():
+    pages = [(5, "Consolidated Profit and Loss Account\nRevenue 100")]
+    client = _fake_client(
+        json.dumps({"pnl": [{"line_item": "Revenue", "value": 100, "page": 5}]})
+    )
+
+    result = asyncio.run(
+        extract_structured(
+            pages,
+            "HY2026",
+            client=client,
+            column=0,
+            reserve_budget=_no_reserve,
+        )
+    )
+
+    kwargs = client.last_kwargs()
+    assert kwargs["max_tokens"] <= 1800
+    assert kwargs["extra_body"]["reasoning_effort"] == "low"
+    assert result.trace["estimated_request_tokens"] <= 8000
+
+
+def test_token_budget_waits_until_prior_reservation_expires():
+    _TOKEN_RESERVATIONS.clear()
+    now = [100.0]
+    waits = []
+
+    async def fake_sleep(seconds):
+        waits.append(seconds)
+        now[0] += seconds
+
+    async def reserve(tokens):
+        return await reserve_token_budget(
+            tokens,
+            sleep=fake_sleep,
+            clock=lambda: now[0],
+        )
+
+    asyncio.run(reserve(5000))
+    asyncio.run(reserve(4000))
+
+    assert waits == [60.0]

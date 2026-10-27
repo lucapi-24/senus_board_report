@@ -31,7 +31,7 @@ from app.models.financial import (
 )
 from app.services import lifecycle
 from app.services.deterministic import compute_kpis, parse_tables
-from app.services.llm_extract import STATEMENTS, extract_structured
+from app.services.llm_extract import STATEMENTS, extract_structured, select_statement_pages
 from app.services.metrics import CATALOG_BY_KEY, kpi_metadata
 from app.services.note_crosscheck import find_note_mismatches
 from app.services.period_detector import get_column_for_period, period_duration_months
@@ -347,11 +347,13 @@ async def ingest_document(
         expected_count = sum(
             len(tables.get(statement, {}) or {}) for statement in STATEMENTS
         )
+        llm_pages = select_statement_pages(pages, tables)
         llm_result = await extract_structured(
-            pages,
+            llm_pages,
             use_label or "",
             column=use_column,
             expected_count=expected_count,
+            document_id=doc.id,
         )
         result = reconcile(tables, llm_result.lines, pages=pages)
         proposal = build_proposal(result, llm_result.trace)

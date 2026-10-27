@@ -18,7 +18,11 @@ import asyncio
 import email.utils
 import json
 import logging
+import math
 import re
+import threading
+import time
+from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from time import perf_counter
@@ -27,6 +31,11 @@ from typing import Any, Awaitable, Callable, Dict, List, Optional, Sequence, Tup
 from app.core.config import settings
 
 STATEMENTS = ("pnl", "balance_sheet", "cash_flow")
+TPM_LIMIT = 8000
+MAX_COMPLETION_TOKENS = 1800
+TOKEN_ESTIMATE_SAFETY_MARGIN = 200
+_TOKEN_RESERVATIONS: deque[Tuple[float, int]] = deque()
+_TOKEN_RESERVATION_LOCK = threading.Lock()
 logger = logging.getLogger(__name__)
 
 
@@ -246,6 +255,92 @@ def annotate_pages(pages: Sequence[Tuple[int, str]]) -> str:
     return "\n".join(f"[p.{num}]\n{text}" for num, text in pages)
 
 
+def build_prompt(pages: Sequence[Tuple[int, str]], column: Optional[int]) -> str:
+    if column is not None:
+        column_names = {
+            0: "current period (leftmost)",
+            1: "comparative prior-period (second)",
+            2: "third comparative",
+        }
+        other_names = {
+            0: "comparative prior-period column(s)",
+            1: "current period column",
+            2: "other comparative column(s)",
+        }
+        column_name = column_names.get(column, f"column {column}")
+        other_name = other_names.get(column, "other column(s)")
+        template = COLUMN_PROMPT.replace("{column_name}", column_name).replace(
+            "{other_name}", other_name
+        )
+    else:
+        template = PROMPT
+    return template.replace("{document}", annotate_pages(pages))
+
+
+def select_statement_pages(
+    pages: Sequence[Tuple[int, str]], deterministic: Dict[str, Any]
+) -> List[Tuple[int, str]]:
+    """Keep only pages identified as statement pages, excluding narrative notes."""
+    statement_pages = {
+        int(page)
+        for values in (deterministic.get("provenance") or {}).values()
+        for page in values.values()
+        if page
+    }
+    heading = re.compile(
+        r"^\s*(?:condensed\s+)?(?:consolidated\s+)?(?:profit and loss account|"
+        r"balance sheet|cash flow statement|statement of cash flows|"
+        r"statement of financial position|statement of comprehensive income)\b",
+        re.IGNORECASE,
+    )
+    continuation_markers = re.compile(
+        r"\b(?:payments to acquire|net cash (?:inflow|used)|receipt\s*/\s*\(repayment\)|"
+        r"cash and cash equivalent at (?:beginning|end) of period)\b",
+        re.IGNORECASE,
+    )
+    heading_pages = set()
+    for page_number, text in pages:
+        if any(heading.search(line) for line in text.splitlines()):
+            statement_pages.add(page_number)
+            heading_pages.add(page_number)
+    for page_number, text in pages:
+        if (
+            page_number - 1 in heading_pages
+            and not re.search(r"\bnotes to\b", text, re.IGNORECASE)
+            and continuation_markers.search(text)
+        ):
+            statement_pages.add(page_number)
+    return [(number, text) for number, text in pages if number in statement_pages]
+
+
+def estimate_tokens(text: str) -> int:
+    """Conservative rough estimate; not a provider-tokenizer measurement."""
+    return math.ceil(len(text.encode("utf-8")) / 3.5)
+
+
+async def reserve_token_budget(
+    estimated_tokens: int,
+    sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+    clock: Callable[[], float] = time.monotonic,
+) -> float:
+    """Reserve a process-wide rolling-minute token budget before a Groq call."""
+    if estimated_tokens > TPM_LIMIT:
+        raise ValueError(f"Estimated request ({estimated_tokens}) exceeds {TPM_LIMIT} TPM.")
+    total_wait = 0.0
+    while True:
+        with _TOKEN_RESERVATION_LOCK:
+            now = clock()
+            while _TOKEN_RESERVATIONS and now - _TOKEN_RESERVATIONS[0][0] >= 60:
+                _TOKEN_RESERVATIONS.popleft()
+            reserved = sum(tokens for _timestamp, tokens in _TOKEN_RESERVATIONS)
+            if reserved + estimated_tokens <= TPM_LIMIT:
+                _TOKEN_RESERVATIONS.append((now, estimated_tokens))
+                return total_wait
+            wait_seconds = max(0.0, _TOKEN_RESERVATIONS[0][0] + 60 - now)
+        await sleep(wait_seconds)
+        total_wait += wait_seconds
+
+
 def build_client():
     if not settings.GROQ_API_KEY:
         return None
@@ -304,6 +399,8 @@ async def extract_structured(
     column: Optional[int] = None,
     expected_count: Optional[int] = None,
     sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+    reserve_budget: Callable[..., Awaitable[float]] = reserve_token_budget,
+    document_id: Optional[int] = None,
 ) -> LLMExtractionResult:
     """Ask the model for the statements and return the grounded lines.
 
@@ -319,6 +416,8 @@ async def extract_structured(
                 "status": "regex_only",
                 "api_result": "not_configured",
                 "model": settings.GROQ_MODEL,
+                "document_id": document_id,
+                "period_label": period_label,
                 "returned_lines": [],
                 "discarded_lines": [],
                 "error_code": "missing_api_key",
@@ -326,15 +425,64 @@ async def extract_structured(
             },
         )
 
-    if column is not None:
-        column_names = {0: "current period (leftmost)", 1: "comparative prior-period (second)", 2: "third comparative"}
-        column_name = column_names.get(column, f"column {column}")
-        other_names = {0: "comparative prior-period column(s)", 1: "current period column", 2: "other comparative column(s)"}
-        other_name = other_names.get(column, "other column(s)")
-        prompt = COLUMN_PROMPT.replace("{column_name}", column_name).replace("{other_name}", other_name)
-    else:
-        prompt = PROMPT
-    prompt = prompt.replace("{document}", annotate_pages(pages))
+    prompt = build_prompt(pages, column)
+    if not pages:
+        return LLMExtractionResult(
+            lines=[],
+            trace={
+                "status": "regex_only",
+                "api_result": "not_called",
+                "error_code": "no_statement_pages",
+                "model": settings.GROQ_MODEL,
+                "document_id": document_id,
+                "period_label": period_label,
+                "returned_lines": [],
+                "discarded_lines": [],
+                "warning": "LLM no disponible: no se detectaron páginas de estados financieros; se usará solo regex.",
+            },
+        )
+    estimated_input_tokens = estimate_tokens(prompt)
+    completion_tokens = min(
+        MAX_COMPLETION_TOKENS,
+        TPM_LIMIT - estimated_input_tokens - TOKEN_ESTIMATE_SAFETY_MARGIN,
+    )
+    request_budget = estimated_input_tokens + completion_tokens + TOKEN_ESTIMATE_SAFETY_MARGIN
+    if completion_tokens < 400 or request_budget > TPM_LIMIT:
+        return LLMExtractionResult(
+            lines=[],
+            trace={
+                "status": "regex_only",
+                "api_result": "not_called",
+                "error_code": "estimated_request_exceeds_tpm",
+                "model": settings.GROQ_MODEL,
+                "document_id": document_id,
+                "period_label": period_label,
+                "estimated_input_tokens": estimated_input_tokens,
+                "max_tokens": completion_tokens,
+                "estimated_request_tokens": request_budget,
+                "returned_lines": [],
+                "discarded_lines": [],
+                "warning": "LLM no disponible: el prompt estimado no cabe en el límite TPM; se usará solo regex.",
+            },
+        )
+    logger.info(
+        "LLM extraction request document_id=%s period=%s model=%s "
+        "estimated_input_tokens=%s max_tokens=%s estimated_request_tokens=%s",
+        document_id,
+        period_label,
+        settings.GROQ_MODEL,
+        estimated_input_tokens,
+        completion_tokens,
+        request_budget,
+    )
+    rate_wait_ms = round(
+        await reserve_budget(request_budget, sleep=sleep) * 1000
+    )
+    reasoning = (
+        {"extra_body": {"reasoning_effort": "low"}}
+        if "gpt-oss" in settings.GROQ_MODEL.lower()
+        else {}
+    )
     response = None
     last_error: Optional[Exception] = None
     started = perf_counter()
@@ -346,8 +494,9 @@ async def extract_structured(
                 model=settings.GROQ_MODEL,
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0.0,
-                max_tokens=4000,
+                max_tokens=completion_tokens,
                 response_format={"type": "json_object"},
+                **reasoning,
             )
             break
         except Exception as exc:  # transient rate limits / network blips
@@ -367,7 +516,11 @@ async def extract_structured(
                 "error_message": str(last_error)[:1000],
                 "model": settings.GROQ_MODEL,
                 "latency_ms": elapsed_ms,
+                "rate_limit_wait_ms": rate_wait_ms,
                 "attempts": attempts,
+                "estimated_input_tokens": estimated_input_tokens,
+                "max_tokens": completion_tokens,
+                "estimated_request_tokens": request_budget,
                 "returned_lines": [],
                 "discarded_lines": [],
                 "warning": f"LLM no disponible: {last_error}; se usará solo regex.",
@@ -380,6 +533,10 @@ async def extract_structured(
                 "api_result": "error",
                 "error_code": "no_response",
                 "model": settings.GROQ_MODEL,
+                "rate_limit_wait_ms": rate_wait_ms,
+                "estimated_input_tokens": estimated_input_tokens,
+                "max_tokens": completion_tokens,
+                "estimated_request_tokens": request_budget,
                 "returned_lines": [],
                 "discarded_lines": [],
                 "warning": "LLM no disponible: no hubo respuesta; se usará solo regex.",
@@ -397,7 +554,11 @@ async def extract_structured(
                 "error_code": "empty_response",
                 "model": settings.GROQ_MODEL,
                 "latency_ms": elapsed_ms,
+                "rate_limit_wait_ms": rate_wait_ms,
                 "attempts": attempts,
+                "estimated_input_tokens": estimated_input_tokens,
+                "max_tokens": completion_tokens,
+                "estimated_request_tokens": request_budget,
                 "returned_lines": [],
                 "discarded_lines": [],
                 "raw_response": raw_response,
@@ -416,7 +577,11 @@ async def extract_structured(
                 "error_message": str(exc),
                 "model": settings.GROQ_MODEL,
                 "latency_ms": elapsed_ms,
+                "rate_limit_wait_ms": rate_wait_ms,
                 "attempts": attempts,
+                "estimated_input_tokens": estimated_input_tokens,
+                "max_tokens": completion_tokens,
+                "estimated_request_tokens": request_budget,
                 "returned_lines": [],
                 "discarded_lines": [
                     {"reason": "invalid_json", "entry": raw_response[:2000]}
@@ -448,7 +613,11 @@ async def extract_structured(
         "api_result": "ok",
         "model": settings.GROQ_MODEL,
         "latency_ms": elapsed_ms,
+        "rate_limit_wait_ms": rate_wait_ms,
         "attempts": attempts,
+        "estimated_input_tokens": estimated_input_tokens,
+        "max_tokens": completion_tokens,
+        "estimated_request_tokens": request_budget,
         "prompt_tokens": getattr(usage, "prompt_tokens", None),
         "completion_tokens": getattr(usage, "completion_tokens", None),
         "total_tokens": getattr(usage, "total_tokens", None),
