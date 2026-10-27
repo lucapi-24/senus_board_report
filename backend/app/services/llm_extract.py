@@ -8,8 +8,10 @@ Two guarantees live here:
 
 * the model must return a fixed JSON schema — one entry per line item with a
   numeric value, the source page and the verbatim printed line;
-* every returned figure is **verified against the page text** it claims to come
-  from, so the model cannot invent numbers (see ``ground_items``).
+* every returned figure is **verified against page text**. A wrong page is only
+  corrected when the figure exactly matches the deterministic value and the
+  printed row can be located under the right statement heading or an
+  unambiguous continuation page.
 """
 
 from __future__ import annotations
@@ -231,21 +233,142 @@ def _value_candidates(value: float) -> List[str]:
     return [f"{whole:,}", str(whole)]
 
 
+def _has_statement_heading(statement: str, text: str) -> bool:
+    patterns = {
+        "pnl": r"\bprofit and loss\b|\bincome statement\b",
+        "balance_sheet": r"\bbalance sheet\b|\bstatement of financial position\b",
+        "cash_flow": r"\bcash\s*flows?\b|\bcashflow\b",
+    }
+    return bool(re.search(patterns.get(statement, r"(?!)"), text, re.IGNORECASE))
+
+
+def _has_any_statement_heading(text: str) -> bool:
+    return any(_has_statement_heading(statement, text) for statement in STATEMENTS)
+
+
+def _statement_pages_for_line(
+    pages: Sequence[Tuple[int, str]], line: StatementLine
+) -> List[int]:
+    heading_patterns = {
+        statement: re.compile(
+            {
+                "pnl": r"\bprofit and loss\b|\bincome statement\b",
+                "balance_sheet": r"\bbalance sheet\b|\bstatement of financial position\b",
+                "cash_flow": r"\bcash\s*flows?\b|\bcashflow\b",
+            }[statement],
+            re.IGNORECASE,
+        )
+        for statement in STATEMENTS
+    }
+    active_statement: Optional[str] = None
+    matching_pages = set()
+    normalized_label = " ".join(line.line_item.casefold().split())
+    value_candidates = _value_candidates(line.value)
+    for page, text in pages:
+        for text_line in text.splitlines():
+            for statement, pattern in heading_patterns.items():
+                if pattern.search(text_line):
+                    active_statement = statement
+                    break
+            normalized_line = " ".join(text_line.casefold().split())
+            if (
+                active_statement == line.statement
+                and normalized_label in normalized_line
+                and any(candidate in text_line for candidate in value_candidates)
+            ):
+                matching_pages.add(page)
+    return sorted(matching_pages)
+
+
 def ground_items(
-    pages: Sequence[Tuple[int, str]], lines: Sequence[StatementLine]
+    pages: Sequence[Tuple[int, str]],
+    lines: Sequence[StatementLine],
+    expected_items: Optional[Dict[str, Dict[str, Dict[str, Any]]]] = None,
+    other_column_items: Optional[Dict[str, Dict[str, float]]] = None,
+    canonicalize_label: Optional[Callable[[str, str], str]] = None,
 ) -> Tuple[List[StatementLine], List[StatementLine]]:
-    """Split lines into (grounded, ungrounded) by checking the claimed page.
+    """Split lines into (grounded, ungrounded) using document text and parser data.
 
     A value is grounded when its digits — with or without thousands separators —
     appear in the text of the page it claims to come from. Sign is ignored, so
     a value of -483753 matches "(483,753)" or "483,753".
+
+    If the model claims the wrong page, repair it only when its value matches the
+    parser's exact value for that label and column. When duplicated labels make
+    the parser page ambiguous, a matching row under the requested statement's
+    heading takes precedence.
     """
     page_text = {num: text for num, text in pages}
+    expected_items = expected_items or {}
+    other_column_items = other_column_items or {}
     grounded: List[StatementLine] = []
     ungrounded: List[StatementLine] = []
     for line in lines:
+        label = (
+            canonicalize_label(line.statement, line.line_item)
+            if canonicalize_label
+            else line.line_item
+        )
+        expected = expected_items.get(line.statement, {}).get(label)
+        other_column_value = other_column_items.get(line.statement, {}).get(label)
+        matches_expected = False
+        if expected:
+            try:
+                matches_expected = abs(float(expected["value"])) == abs(line.value)
+            except (KeyError, TypeError, ValueError):
+                matches_expected = False
+        if (
+            other_column_value is not None
+            and abs(float(other_column_value)) == abs(line.value)
+            and not matches_expected
+        ):
+            line.meta["grounding_failure"] = "wrong_comparative_column"
+            line.grounded = False
+            ungrounded.append(line)
+            continue
+
         text = page_text.get(line.page, "")
         ok = bool(text) and any(cand in text for cand in _value_candidates(line.value))
+        if not ok:
+            if expected:
+                try:
+                    expected_value = float(expected["value"])
+                    expected_page = int(expected["page"])
+                except (KeyError, TypeError, ValueError):
+                    expected_value = None
+                    expected_page = 0
+                expected_text = page_text.get(expected_page, "")
+                normalized_label = " ".join(line.line_item.casefold().split())
+                label_present = bool(expected_text) and normalized_label in " ".join(
+                    expected_text.casefold().split()
+                )
+                same_value = (
+                    expected_value is not None
+                    and abs(expected_value) == abs(line.value)
+                )
+                present_on_expected_page = bool(expected_text) and any(
+                    candidate in expected_text for candidate in _value_candidates(line.value)
+                )
+                if same_value and label_present and present_on_expected_page:
+                    corrected_page = expected_page
+                    statement_pages = _statement_pages_for_line(pages, line)
+                    can_recover = expected_page in statement_pages
+                    if not can_recover and len(statement_pages) == 1:
+                        corrected_page = statement_pages[0]
+                        can_recover = True
+                    elif not can_recover and len(statement_pages) > 1:
+                        line.meta["grounding_failure"] = "ambiguous_statement_page"
+                    elif not can_recover and not _has_any_statement_heading(expected_text):
+                        can_recover = True
+                    elif not can_recover:
+                        line.meta["grounding_failure"] = "parser_page_conflicts_with_statement"
+                    if can_recover:
+                        line.meta["claimed_page"] = line.page
+                        line.meta["page_recovered"] = True
+                        line.meta["grounding_source"] = "parser_value_and_page"
+                        line.page = corrected_page
+                        text = page_text.get(corrected_page, "")
+                        ok = True
         line.grounded = ok
         (grounded if ok else ungrounded).append(line)
     return grounded, ungrounded
@@ -428,6 +551,9 @@ async def extract_structured(
     sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
     reserve_budget: Callable[..., Awaitable[float]] = reserve_token_budget,
     document_id: Optional[int] = None,
+    expected_items: Optional[Dict[str, Dict[str, Dict[str, Any]]]] = None,
+    other_column_items: Optional[Dict[str, Dict[str, float]]] = None,
+    canonicalize_label: Optional[Callable[[str, str], str]] = None,
 ) -> LLMExtractionResult:
     """Ask the model for the statements and return the grounded lines.
 
@@ -657,14 +783,20 @@ async def extract_structured(
         data,
         expected_column=column,
     )
-    grounded, ungrounded = ground_items(pages, normalized)
+    grounded, ungrounded = ground_items(
+        pages,
+        normalized,
+        expected_items=expected_items,
+        other_column_items=other_column_items,
+        canonicalize_label=canonicalize_label,
+    )
     ground_discarded = [
         {
             "statement": line.statement,
             "line_item": line.line_item,
             "value": line.value,
             "page": line.page,
-            "reason": (
+            "reason": line.meta.get("grounding_failure") or (
                 "claimed_page_not_in_document"
                 if line.page not in {page for page, _text in pages}
                 else "value_not_found_on_claimed_page"
@@ -706,6 +838,8 @@ async def extract_structured(
                 "line_item": line.line_item,
                 "value": line.value,
                 "page": line.page,
+                "claimed_page": line.meta.get("claimed_page", line.page),
+                "page_recovered": line.meta.get("page_recovered", False),
                 "column": line.column,
                 "source_text": line.source_text,
             }

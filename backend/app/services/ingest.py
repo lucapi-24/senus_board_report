@@ -31,7 +31,12 @@ from app.models.financial import (
 )
 from app.services import lifecycle
 from app.services.deterministic import compute_kpis, parse_tables
-from app.services.llm_extract import STATEMENTS, extract_structured, select_statement_pages
+from app.services.llm_extract import (
+    STATEMENTS,
+    extract_structured,
+    parse_value,
+    select_statement_pages,
+)
 from app.services.metrics import CATALOG_BY_KEY, kpi_metadata
 from app.services.note_crosscheck import find_note_mismatches
 from app.services.period_detector import get_column_for_period, period_duration_months
@@ -351,9 +356,33 @@ async def ingest_document(
             use_column = 0
 
         tables = parse_tables(pages, column=use_column)
+        other_column_tables = parse_tables(pages, column=1 - use_column)
         expected_count = sum(
             len(tables.get(statement, {}) or {}) for statement in STATEMENTS
         )
+        expected_items: Dict[str, Dict[str, Dict[str, Any]]] = {}
+        other_column_items: Dict[str, Dict[str, float]] = {}
+        table_provenance = tables.get("provenance", {}) or {}
+        for statement in STATEMENTS:
+            expected_items[statement] = {}
+            other_column_items[statement] = {}
+            for label, raw_value in (tables.get(statement, {}) or {}).items():
+                canonical = canonical_label(statement, label)
+                value = parse_value(raw_value)
+                page = (table_provenance.get(statement, {}) or {}).get(label)
+                page = page or (table_provenance.get(statement, {}) or {}).get(canonical)
+                if value is not None:
+                    expected_items[statement][canonical] = {
+                        "value": value,
+                    }
+                    if page:
+                        expected_items[statement][canonical]["page"] = page
+            for label, raw_value in (
+                other_column_tables.get(statement, {}) or {}
+            ).items():
+                value = parse_value(raw_value)
+                if value is not None:
+                    other_column_items[statement][canonical_label(statement, label)] = value
         llm_pages = select_statement_pages(pages, tables)
         llm_result = await extract_structured(
             llm_pages,
@@ -361,6 +390,9 @@ async def ingest_document(
             column=use_column,
             expected_count=expected_count,
             document_id=doc.id,
+            expected_items=expected_items,
+            other_column_items=other_column_items,
+            canonicalize_label=canonical_label,
         )
         result = reconcile(tables, llm_result.lines, pages=pages)
         llm_trace = llm_result.trace

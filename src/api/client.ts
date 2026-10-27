@@ -229,6 +229,8 @@ export interface LLMCallTrace {
     normalized_value?: number
     sign_normalized?: boolean
     page?: number
+    claimed_page?: number
+    page_recovered?: boolean
   }>
   discarded_lines?: Array<Record<string, unknown>>
   raw_response?: string

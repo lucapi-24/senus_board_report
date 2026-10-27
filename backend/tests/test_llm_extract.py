@@ -120,6 +120,123 @@ def test_ground_items_rejects_hallucinated_figures():
     assert {x.line_item for x in ungrounded} == {"Invented", "Wrong page"}
 
 
+def test_ground_items_recovers_wrong_page_from_exact_parser_match():
+    pages = [(6, "Cash used in operations (408,900)"), (7, "Cash at end 140,135")]
+    line = StatementLine("cash_flow", "Cash used in operations", 408900.0, 7)
+    expected = {
+        "cash_flow": {
+            "Cash used in operations": {"value": -408900.0, "page": 6}
+        }
+    }
+
+    grounded, ungrounded = ground_items(pages, [line], expected_items=expected)
+
+    assert grounded == [line]
+    assert ungrounded == []
+    assert line.page == 6
+    assert line.meta == {
+        "claimed_page": 7,
+        "page_recovered": True,
+        "grounding_source": "parser_value_and_page",
+    }
+
+
+def test_ground_items_does_not_recover_a_different_parser_value():
+    pages = [(6, "Cash used in operations (408,900)"), (7, "Cash at end 140,135")]
+    line = StatementLine("cash_flow", "Cash used in operations", 408901.0, 7)
+    expected = {
+        "cash_flow": {
+            "Cash used in operations": {"value": -408900.0, "page": 6}
+        }
+    }
+
+    grounded, ungrounded = ground_items(pages, [line], expected_items=expected)
+
+    assert grounded == []
+    assert ungrounded == [line]
+    assert line.page == 7
+
+
+def test_ground_items_rejects_value_only_matching_the_other_column():
+    pages = [(6, "Consolidated Balance Sheet\nContingent consideration -850,000")]
+    line = StatementLine("balance_sheet", "Contingent consideration", -850000.0, 6)
+
+    grounded, ungrounded = ground_items(
+        pages,
+        [line],
+        expected_items={"balance_sheet": {}},
+        other_column_items={
+            "balance_sheet": {"Contingent consideration": -850000.0}
+        },
+    )
+
+    assert grounded == []
+    assert ungrounded == [line]
+    assert line.meta["grounding_failure"] == "wrong_comparative_column"
+
+
+def test_ground_items_uses_statement_heading_for_duplicate_row_page():
+    pages = [
+        (5, "Consolidated Profit and Loss Account\nInterest payable and similar expenses 1,391"),
+        (
+            6,
+            "Consolidated cash flow statement\n"
+            "Interest payable and similar expenses 1,391",
+        ),
+        (7, "Cashflow from investing activities"),
+    ]
+    line = StatementLine("cash_flow", "Interest payable and similar expenses", 1391.0, 7)
+    expected = {
+        "cash_flow": {
+            "Interest payable": {"value": -1391.0, "page": 5}
+        }
+    }
+
+    grounded, ungrounded = ground_items(
+        pages,
+        [line],
+        expected_items=expected,
+        canonicalize_label=lambda _statement, _label: "Interest payable",
+    )
+
+    assert grounded == [line]
+    assert ungrounded == []
+    assert line.page == 6
+
+
+def test_ground_items_rejects_ambiguous_statement_page_recovery():
+    pages = [
+        (5, "Consolidated Profit and Loss Account\nInterest payable and similar expenses 1,391"),
+        (
+            6,
+            "Consolidated cash flow statement\n"
+            "Interest payable and similar expenses 1,391",
+        ),
+        (
+            7,
+            "Cashflow from investing activities\n"
+            "Interest payable and similar expenses 1,391",
+        ),
+    ]
+    line = StatementLine("cash_flow", "Interest payable and similar expenses", 1391.0, 8)
+    expected = {
+        "cash_flow": {
+            "Interest payable": {"value": -1391.0, "page": 5}
+        }
+    }
+
+    grounded, ungrounded = ground_items(
+        pages,
+        [line],
+        expected_items=expected,
+        canonicalize_label=lambda _statement, _label: "Interest payable",
+    )
+
+    assert grounded == []
+    assert ungrounded == [line]
+    assert line.meta["grounding_failure"] == "ambiguous_statement_page"
+
+
 def _fake_client(content: str, errors=None):
     """Stub returning a fixed payload, so no network is touched."""
 
