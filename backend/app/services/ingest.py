@@ -48,6 +48,11 @@ ITEM_MODEL = {
     "balance_sheet": BalanceSheetItem,
     "cash_flow": CashFlowItem,
 }
+BALANCE_SUBTOTALS = {
+    "Total Fixed Assets": ("Goodwill", "Development Costs", "Tangible Assets"),
+    "Total Current Assets": ("Debtors", "Cash and cash equivalents"),
+}
+SUBTOTAL_TOLERANCE = 1.0
 
 
 class PeriodReplacementRequired(ValueError):
@@ -116,6 +121,47 @@ def _chosen(result: Dict[str, Any]) -> Dict[str, Dict[str, float]]:
     return chosen
 
 
+def resolve_unlabelled_subtotals(
+    tables: Dict[str, Any],
+    tolerance: float = SUBTOTAL_TOLERANCE,
+) -> Tuple[Dict[str, str], List[Dict[str, Any]]]:
+    """Keep printed unlabeled totals when they agree with the components."""
+    balance_sheet = tables.setdefault("balance_sheet", {})
+    origins: Dict[str, str] = {}
+    warnings: List[Dict[str, Any]] = []
+    for total_label, components in BALANCE_SUBTOTALS.items():
+        component_values = [
+            parse_value(balance_sheet[label])
+            for label in components
+            if label in balance_sheet
+        ]
+        if len(component_values) != len(components) or any(
+            value is None for value in component_values
+        ):
+            continue
+        derived_total = sum(float(value) for value in component_values if value is not None)
+        printed_value = parse_value(balance_sheet.get(total_label))
+        if printed_value is not None and abs(float(printed_value) - derived_total) <= tolerance:
+            origins[total_label] = "reported (unlabeled)"
+            continue
+
+        balance_sheet[total_label] = Decimal(str(round(derived_total, 2)))
+        origins[total_label] = "derived"
+        if printed_value is not None:
+            warnings.append(
+                {
+                    "line_item": total_label,
+                    "printed_value": float(printed_value),
+                    "component_sum": derived_total,
+                    "message": (
+                        f"{total_label} printed as {float(printed_value):,.0f}, but its "
+                        f"components sum to {derived_total:,.0f}; the derived sum is retained."
+                    ),
+                }
+            )
+    return origins, warnings
+
+
 def _provenance(result: Dict[str, Any]) -> Dict[str, Dict[str, int]]:
     provenance: Dict[str, Dict[str, int]] = {}
     for statement in STATEMENTS:
@@ -179,6 +225,7 @@ async def _persist(
     start_date: Optional[date] = None,
     end_date: Optional[date] = None,
     replace_existing: bool = False,
+    item_origins: Optional[Dict[str, str]] = None,
 ) -> None:
     use_label = label or doc.period_label
     use_start = start_date or doc.period_start
@@ -230,7 +277,10 @@ async def _persist(
                     line_item=item.line_item,
                     value_eur=Decimal(str(round(item.value, 2))),
                     page=item.page,
-                    origin="derived" if item.line_item == "EBITDA" else "reported",
+                    origin=(item_origins or {}).get(
+                        item.line_item,
+                        "derived" if item.line_item == "EBITDA" else "reported",
+                    ),
                     review_status=review_status_for(item.status),
                     confidence=item.confidence,
                     original_value=original,
@@ -356,6 +406,7 @@ async def ingest_document(
             use_column = 0
 
         tables = parse_tables(pages, column=use_column)
+        item_origins, subtotal_warnings = resolve_unlabelled_subtotals(tables)
         other_column_tables = parse_tables(pages, column=1 - use_column)
         expected_count = sum(
             len(tables.get(statement, {}) or {}) for statement in STATEMENTS
@@ -443,6 +494,7 @@ async def ingest_document(
             statement_pages,
             tables,
         )
+        proposal["subtotal_warnings"] = subtotal_warnings
         await _persist(
             db,
             doc,
@@ -453,6 +505,7 @@ async def ingest_document(
             start_date=use_start,
             end_date=use_end,
             replace_existing=replace_existing,
+            item_origins=item_origins,
         )
         doc.status = lifecycle.advance(doc.status, lifecycle.EXTRACTED)
         await db.commit()

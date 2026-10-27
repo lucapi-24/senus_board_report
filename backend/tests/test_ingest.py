@@ -9,6 +9,7 @@ from app.services.ingest import (
     _months_between,
     _provenance,
     build_proposal,
+    resolve_unlabelled_subtotals,
     _store_period_proposal,
     require_replacement_confirmation,
 )
@@ -80,3 +81,45 @@ def test_existing_periods_require_explicit_replacement_confirmation():
 
     require_replacement_confirmation(["HY2026"], replace_existing=True)
     require_replacement_confirmation([], replace_existing=False)
+
+
+def test_unlabelled_printed_subtotal_is_reported_when_within_tolerance():
+    tables = {
+        "balance_sheet": {
+            "Debtors": "188149",
+            "Cash and cash equivalents": "735189",
+            "Total Current Assets": "923339",
+        }
+    }
+
+    origins, warnings = resolve_unlabelled_subtotals(tables)
+
+    assert tables["balance_sheet"]["Total Current Assets"] == "923339"
+    assert origins["Total Current Assets"] == "reported (unlabeled)"
+    assert warnings == []
+
+
+def test_unlabelled_printed_subtotal_is_replaced_by_sum_and_warned():
+    tables = {
+        "balance_sheet": {
+            "Debtors": "188149",
+            "Cash and cash equivalents": "735189",
+            "Total Current Assets": "923340",
+        }
+    }
+
+    origins, warnings = resolve_unlabelled_subtotals(tables)
+
+    assert float(tables["balance_sheet"]["Total Current Assets"]) == 923338
+    assert origins["Total Current Assets"] == "derived"
+    assert warnings == [
+        {
+            "line_item": "Total Current Assets",
+            "printed_value": 923340.0,
+            "component_sum": 923338.0,
+            "message": (
+                "Total Current Assets printed as 923,340, but its components sum "
+                "to 923,338; the derived sum is retained."
+            ),
+        }
+    ]

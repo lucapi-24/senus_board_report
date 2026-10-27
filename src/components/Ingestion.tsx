@@ -772,6 +772,16 @@ export function Ingestion({ role, onDataChanged }: { role?: string; onDataChange
                   </ul>
                 </div>
               ) : null}
+              {review.subtotal_warnings?.length ? (
+                <div className="callout callout--error" role="alert">
+                  <strong>Unlabelled subtotals need review:</strong>
+                  <ul>
+                    {review.subtotal_warnings.map((warning) => (
+                      <li key={warning.line_item}>{warning.message}</li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
 
               {(['pnl', 'balance_sheet', 'cash_flow'] as const).map((statement) => {
                 const merged = merge(review![statement], period[statement], statement)

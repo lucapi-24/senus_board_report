@@ -190,6 +190,12 @@ export interface ReviewPayload {
   cash_flow: ReconciledItem[]
   summary: { matched: number; flagged: number; total: number }
   note_warnings?: NoteWarning[]
+  subtotal_warnings?: Array<{
+    line_item: string
+    printed_value: number
+    component_sum: number
+    message: string
+  }>
   llm_trace?: LLMCallTrace
 }
 
