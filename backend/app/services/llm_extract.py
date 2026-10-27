@@ -337,6 +337,38 @@ def _statement_pages_for_line(
                             break
                     if page in matching_pages:
                         continue
+            elif not NUMBER_TOKEN_RE.search(normalized_line):
+                for continuation in page_lines[index + 1 : index + 2]:
+                    normalized_continuation = " ".join(
+                        continuation.casefold().split()
+                    )
+                    if not NUMBER_TOKEN_RE.search(normalized_continuation):
+                        continue
+                    combined = f"{normalized_line} {normalized_continuation}"
+                    for label in normalized_labels:
+                        match = re.search(re.escape(label), combined)
+                        if match is None:
+                            continue
+                        split = len(normalized_line) - match.start()
+                        if (
+                            split <= 0
+                            or split >= len(label)
+                            or not label[split].isspace()
+                            or normalized_line[match.start() :].rstrip()
+                            != label[:split].rstrip()
+                        ):
+                            continue
+                        label_continuation = label[split:].lstrip()
+                        if not normalized_continuation.startswith(label_continuation):
+                            continue
+                        remainder = normalized_continuation[len(label_continuation) :]
+                        if not re.fullmatch(r"[\s€£$(),.+\-0-9]+", remainder):
+                            continue
+                        if _column_value_matches(remainder, 0, line.value, column):
+                            matching_pages.add(page)
+                            break
+                    if page in matching_pages:
+                        break
 
             anchor = UNLABELLED_TOTAL_ANCHORS.get(line.line_item)
             if not anchor:
@@ -374,14 +406,12 @@ def ground_items(
         elif not statement_pages:
             resolved_page = None
             claimed_text = next((text for page, text in pages if page == line.page), "")
-            reason = (
-                "label_value_column_not_found"
-                if any(
-                    candidate in claimed_text
-                    for candidate in _value_candidates(line.value)
-                )
-                else "value_not_found_on_claimed_page"
-            )
+            reason = "value_not_found_on_claimed_page"
+            if any(
+                candidate in claimed_text
+                for candidate in _value_candidates(line.value)
+            ):
+                reason = "label_value_column_not_found"
             line.meta["grounding_failure"] = reason
         else:
             resolved_page = None

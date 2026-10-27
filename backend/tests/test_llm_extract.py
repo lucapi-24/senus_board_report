@@ -1,6 +1,8 @@
 import asyncio
 import json
 
+import pytest
+
 from app.services.llm_extract import (
     StatementLine,
     _TOKEN_RESERVATIONS,
@@ -156,6 +158,64 @@ def test_ground_items_rejects_value_only_matching_the_other_column():
     assert grounded == []
     assert ungrounded == [line]
     assert line.meta["grounding_failure"] == "label_value_column_not_found"
+
+
+@pytest.mark.parametrize(
+    ("statement", "label", "value", "page_text"),
+    [
+        (
+            "balance_sheet",
+            "Creditors: amounts falling due after more than one year",
+            -76474,
+            "Consolidated Balance Sheet\n"
+            "Creditors: amounts falling due after more than one\n"
+            "year -76,474 -85,468",
+        ),
+        (
+            "balance_sheet",
+            "Creditors: amounts falling due after more than one year",
+            -85468,
+            "Consolidated Balance Sheet\n"
+            "Creditors: amounts falling due after more than one\n"
+            "year -76,474 -85,468",
+        ),
+    ],
+)
+def test_ground_items_joins_wrapped_label_and_respects_both_columns(
+    statement, label, value, page_text
+):
+    line = StatementLine(
+        statement,
+        label,
+        value,
+        6,
+        column=0 if value == -76474 else 1,
+    )
+
+    grounded, ungrounded = ground_items([(6, page_text)], [line])
+
+    assert grounded == [line]
+    assert ungrounded == []
+
+
+def test_ground_items_does_not_join_label_to_unrelated_continuation_text():
+    page_text = (
+        "Consolidated Balance Sheet\n"
+        "Creditors: amounts falling due after more than one\n"
+        "yearly obligations -76,474 -85,468"
+    )
+    line = StatementLine(
+        "balance_sheet",
+        "Creditors: amounts falling due after more than one year",
+        -76474,
+        6,
+        column=0,
+    )
+
+    grounded, ungrounded = ground_items([(6, page_text)], [line])
+
+    assert grounded == []
+    assert ungrounded == [line]
 
 
 def test_ground_items_accepts_target_column_without_parser_values():
