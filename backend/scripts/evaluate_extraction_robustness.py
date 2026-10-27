@@ -118,6 +118,14 @@ async def evaluate(
             statement: sum(line.statement == statement for line in llm_result.lines)
             for statement in ("pnl", "balance_sheet", "cash_flow")
         },
+        "llm_labels_by_statement": {
+            statement: [
+                line.line_item
+                for line in llm_result.lines
+                if line.statement == statement
+            ]
+            for statement in ("pnl", "balance_sheet", "cash_flow")
+        },
         "llm_replacement_label_matches": llm_label_matches,
         "llm_only_items": llm_only,
         "selected_pages": [number for number, _text in selected_pages],

@@ -6,6 +6,7 @@ import pytest
 from app.services.ingest import (
     PeriodReplacementRequired,
     _chosen,
+    _expected_llm_coverage,
     _months_between,
     _provenance,
     build_proposal,
@@ -56,6 +57,21 @@ def test_llm_only_item_is_reviewable_but_excluded_from_kpis():
 
     assert item.status == "llm_only"
     assert _chosen(result)["pnl"] == {}
+
+
+def test_expected_coverage_excludes_llm_only_items():
+    result = reconcile(
+        {"pnl": {"Revenue": "100", "Cost of sales": "40"}},
+        [
+            StatementLine("pnl", "Revenue", 100, 5),
+            StatementLine("pnl", "Unexpected row", 3, 5),
+        ],
+    )
+
+    grounded_count, missing_expected = _expected_llm_coverage(result)
+
+    assert grounded_count == 1
+    assert missing_expected["pnl"] == ["Cost of sales"]
 
 
 def test_llm_call_history_is_persisted_per_period_without_overwriting():

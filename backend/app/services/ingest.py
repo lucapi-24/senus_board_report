@@ -121,6 +121,25 @@ def _chosen(result: Dict[str, Any]) -> Dict[str, Dict[str, float]]:
     return chosen
 
 
+def _expected_llm_coverage(
+    result: Dict[str, Any],
+) -> Tuple[int, Dict[str, List[str]]]:
+    grounded_count = sum(
+        item.source == "both"
+        for statement in STATEMENTS
+        for item in result[statement]
+    )
+    missing_expected = {
+        statement: [
+            item.line_item
+            for item in result[statement]
+            if item.status == "regex_only"
+        ]
+        for statement in STATEMENTS
+    }
+    return grounded_count, missing_expected
+
+
 def resolve_unlabelled_subtotals(
     tables: Dict[str, Any],
     tolerance: float = SUBTOTAL_TOLERANCE,
@@ -441,19 +460,9 @@ async def ingest_document(
                 line["normalized_value"] = normalized
                 line["sign_normalized"] = normalized != line["value"]
         llm_trace["expected_count"] = expected_count
-        llm_trace["grounded_count"] = sum(
-            item.source in ("both", "llm")
-            for statement in STATEMENTS
-            for item in result[statement]
-        )
-        llm_trace["missing_expected"] = {
-            statement: [
-                item.line_item
-                for item in result[statement]
-                if item.status == "regex_only"
-            ]
-            for statement in STATEMENTS
-        }
+        grounded_count, missing_expected = _expected_llm_coverage(result)
+        llm_trace["grounded_count"] = grounded_count
+        llm_trace["missing_expected"] = missing_expected
         missing_count = sum(len(labels) for labels in llm_trace["missing_expected"].values())
         if llm_trace.get("status") == "truncated" and missing_count:
             llm_trace["warning"] = (
@@ -463,8 +472,9 @@ async def ingest_document(
         elif llm_trace.get("status") != "regex_only" and missing_count:
             llm_trace["status"] = "partial"
             llm_trace["warning"] = (
-                f"LLM devolvió {llm_trace['grounded_count']} de {expected_count} "
-                f"partidas esperadas; faltan {missing_count} y quedan para revisión."
+                f"Cobertura de partidas conocidas por regex: "
+                f"{llm_trace['grounded_count']} de {expected_count}; "
+                f"faltan {missing_count} y quedan para revisión."
             )
         proposal = build_proposal(result, llm_result.trace)
         statement_pages = {
