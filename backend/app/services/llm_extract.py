@@ -35,7 +35,7 @@ from app.core.config import settings
 
 STATEMENTS = ("pnl", "balance_sheet", "cash_flow")
 TPM_LIMIT = 8000
-MAX_COMPLETION_TOKENS = 2400
+MAX_COMPLETION_TOKENS = 3000
 TOKEN_ESTIMATE_SAFETY_MARGIN = 200
 _TOKEN_RESERVATIONS: deque[Tuple[float, int]] = deque()
 _TOKEN_RESERVATION_LOCK = threading.Lock()
@@ -753,6 +753,16 @@ async def extract_structured(
         )
 
     elapsed_ms = round((perf_counter() - started) * 1000)
+    finish_reason = getattr(response.choices[0], "finish_reason", None)
+    truncated = finish_reason == "length"
+    usage = getattr(response, "usage", None)
+    response_metadata = {
+        "finish_reason": finish_reason,
+        "truncated": truncated,
+        "prompt_tokens": getattr(usage, "prompt_tokens", None),
+        "completion_tokens": getattr(usage, "completion_tokens", None),
+        "total_tokens": getattr(usage, "total_tokens", None),
+    }
     raw_response = response.choices[0].message.content or ""
     if not raw_response.strip():
         return finish(
@@ -771,7 +781,12 @@ async def extract_structured(
                 "returned_lines": [],
                 "discarded_lines": [],
                 "raw_response": raw_response,
-                "warning": "LLM no disponible: la respuesta estaba vacía; se usará solo regex.",
+                **response_metadata,
+                "warning": (
+                    "LLM respondió de forma truncada; se usará solo regex."
+                    if truncated
+                    else "LLM no disponible: la respuesta estaba vacía; se usará solo regex."
+                ),
             },
         )
     try:
@@ -796,7 +811,13 @@ async def extract_structured(
                     {"reason": "invalid_json", "entry": raw_response[:2000]}
                 ],
                 "raw_response": raw_response,
-                "warning": "LLM no disponible: JSON inválido; se usará solo regex.",
+                **response_metadata,
+                "warning": (
+                    "LLM respondió de forma truncada (finish_reason=length) y el JSON "
+                    "no se pudo leer; se usará solo regex."
+                    if truncated
+                    else "LLM no disponible: JSON inválido; se usará solo regex."
+                ),
             },
         )
     normalized, normalization_discarded = normalize_payload_with_discarded(
@@ -819,9 +840,10 @@ async def extract_structured(
         for line in ungrounded
     ]
     discarded = normalization_discarded + ground_discarded
-    usage = getattr(response, "usage", None)
     trace = {
-        "status": "ok" if grounded else "regex_only",
+        "status": (
+            "truncated" if grounded and truncated else "ok" if grounded else "regex_only"
+        ),
         "api_result": "ok",
         "model": settings.GROQ_MODEL,
         "error_code": None,
@@ -831,9 +853,7 @@ async def extract_structured(
         "estimated_input_tokens": estimated_input_tokens,
         "max_tokens": completion_tokens,
         "estimated_request_tokens": request_budget,
-        "prompt_tokens": getattr(usage, "prompt_tokens", None),
-        "completion_tokens": getattr(usage, "completion_tokens", None),
-        "total_tokens": getattr(usage, "total_tokens", None),
+        **response_metadata,
         "raw_item_count": (
             sum(
                 len(value)
@@ -864,15 +884,28 @@ async def extract_structured(
     }
     if not grounded:
         trace["warning"] = (
-            "LLM no disponible: no devolvió cifras fundamentadas; se usará solo regex."
+            "LLM respondió de forma truncada y no devolvió cifras fundamentadas; "
+            "se usará solo regex."
+            if truncated
+            else "LLM no disponible: no devolvió cifras fundamentadas; se usará solo regex."
         )
     elif expected_count is not None and len(grounded) < expected_count:
         missing_count = max((expected_count or 0) - len(grounded), 0)
-        trace["status"] = "partial"
-        trace["warning"] = (
+        trace["status"] = "truncated" if truncated else "partial"
+        coverage_warning = (
             f"LLM devolvió {len(grounded)} partidas fundamentadas de "
             f"{expected_count if expected_count is not None else len(normalized)} esperadas; "
             f"{missing_count} ausentes."
+        )
+        trace["warning"] = (
+            f"LLM respondió de forma truncada (finish_reason=length). {coverage_warning}"
+            if truncated
+            else coverage_warning
+        )
+    elif truncated:
+        trace["warning"] = (
+            "LLM respondió de forma truncada (finish_reason=length); "
+            "la extracción podría estar incompleta."
         )
     logger.info(
         "LLM extraction result model=%s period=%s latency_ms=%s "

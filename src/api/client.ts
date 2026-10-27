@@ -217,6 +217,8 @@ export interface LLMCallTrace {
   prompt_tokens?: number | null
   completion_tokens?: number | null
   total_tokens?: number | null
+  finish_reason?: string | null
+  truncated?: boolean
   estimated_input_tokens?: number | null
   max_tokens?: number | null
   estimated_request_tokens?: number | null

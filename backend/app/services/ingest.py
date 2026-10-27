@@ -455,7 +455,12 @@ async def ingest_document(
             for statement in STATEMENTS
         }
         missing_count = sum(len(labels) for labels in llm_trace["missing_expected"].values())
-        if llm_trace.get("status") != "regex_only" and missing_count:
+        if llm_trace.get("status") == "truncated" and missing_count:
+            llm_trace["warning"] = (
+                f"{llm_trace.get('warning', '')} "
+                f"{missing_count} partidas esperadas siguen sin cubrir."
+            ).strip()
+        elif llm_trace.get("status") != "regex_only" and missing_count:
             llm_trace["status"] = "partial"
             llm_trace["warning"] = (
                 f"LLM devolvió {llm_trace['grounded_count']} de {expected_count} "

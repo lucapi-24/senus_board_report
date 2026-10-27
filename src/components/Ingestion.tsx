@@ -679,6 +679,8 @@ export function Ingestion({ role, onDataChanged }: { role?: string; onDataChange
                     Document {trace.document_id ?? detail.id} · period {trace.period_label ?? period.label}
                     {' · '}model {trace.model ?? 'n/d'}
                     {' · '}result {trace.api_result ?? 'n/d'}
+                    {trace.finish_reason ? ` · finish ${trace.finish_reason}` : ''}
+                    {trace.truncated ? ' · truncated' : ''}
                     {trace.completed_at ? ` · completed ${trace.completed_at}` : ''}
                   </p>
                   <p className="small">

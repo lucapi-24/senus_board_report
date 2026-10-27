@@ -208,7 +208,7 @@ def test_ground_items_rejects_ambiguous_statement_page_recovery():
     assert line.meta["grounding_failure"] == "ambiguous_text_match"
 
 
-def _fake_client(content: str, errors=None):
+def _fake_client(content: str, errors=None, finish_reason="stop"):
     """Stub returning a fixed payload, so no network is touched."""
 
     class _Message:
@@ -218,6 +218,7 @@ def _fake_client(content: str, errors=None):
     class _Choice:
         def __init__(self):
             self.message = _Message()
+            self.finish_reason = finish_reason
 
     class _Response:
         def __init__(self):
@@ -446,11 +447,54 @@ def test_prompt_budget_and_reasoning_effort_are_constrained():
     )
 
     kwargs = client.last_kwargs()
-    assert kwargs["max_tokens"] <= 2400
+    assert kwargs["max_tokens"] <= 3000
     assert kwargs["extra_body"]["reasoning_effort"] == "low"
     assert '"source_text":' not in kwargs["messages"][0]["content"]
     assert result.trace["estimated_request_tokens"] <= 8000
     assert result.trace["returned_lines"][0]["column"] == 0
+
+
+def test_length_finish_reason_records_usage_and_warns():
+    client = _fake_client(
+        json.dumps({"pnl": [{"line_item": "Revenue", "value": 100, "page": 5}]}),
+        finish_reason="length",
+    )
+
+    result = asyncio.run(
+        extract_structured(
+            [(5, "Revenue 100")],
+            "HY2026",
+            client=client,
+            expected_count=1,
+            reserve_budget=_no_reserve,
+        )
+    )
+
+    assert result.trace["status"] == "truncated"
+    assert result.trace["finish_reason"] == "length"
+    assert result.trace["truncated"] is True
+    assert result.trace["completion_tokens"] == 12
+    assert "truncada" in result.trace["warning"]
+    assert result.trace["accepted_count"] == 1
+
+
+def test_truncated_invalid_json_keeps_usage_and_falls_back_to_regex():
+    client = _fake_client("{", finish_reason="length")
+
+    result = asyncio.run(
+        extract_structured(
+            [(5, "Revenue 100")],
+            "HY2026",
+            client=client,
+            reserve_budget=_no_reserve,
+        )
+    )
+
+    assert result.trace["status"] == "regex_only"
+    assert result.trace["finish_reason"] == "length"
+    assert result.trace["truncated"] is True
+    assert result.trace["completion_tokens"] == 12
+    assert "JSON" in result.trace["warning"]
 
 
 def test_token_budget_waits_until_prior_reservation_expires():
