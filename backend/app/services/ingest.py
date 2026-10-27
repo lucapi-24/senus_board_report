@@ -35,7 +35,7 @@ from app.services.llm_extract import STATEMENTS, extract_structured, select_stat
 from app.services.metrics import CATALOG_BY_KEY, kpi_metadata
 from app.services.note_crosscheck import find_note_mismatches
 from app.services.period_detector import get_column_for_period, period_duration_months
-from app.services.reconciliation import reconcile, review_status_for
+from app.services.reconciliation import canonical_label, reconcile, review_status_for
 from app.services.validation import validate_period
 
 ITEM_MODEL = {
@@ -365,6 +365,19 @@ async def ingest_document(
         result = reconcile(tables, llm_result.lines, pages=pages)
         llm_trace = llm_result.trace
         llm_trace["statement_pages"] = [page for page, _text in llm_pages]
+        normalized_values = {
+            (statement, item.line_item): item.llm_value
+            for statement in STATEMENTS
+            for item in result[statement]
+            if item.llm_value is not None
+        }
+        for line in llm_trace.get("returned_lines", []):
+            normalized = normalized_values.get(
+                (line["statement"], canonical_label(line["statement"], line["line_item"]))
+            )
+            if normalized is not None:
+                line["normalized_value"] = normalized
+                line["sign_normalized"] = normalized != line["value"]
         llm_trace["expected_count"] = expected_count
         llm_trace["grounded_count"] = sum(
             item.source in ("both", "llm")

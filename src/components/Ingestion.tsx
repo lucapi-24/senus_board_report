@@ -732,6 +732,9 @@ export function Ingestion({ role, onDataChanged }: { role?: string; onDataChange
                         <li key={`returned-${lineIndex}`}>
                           {line.statement} · {line.line_item} · {formatEur(line.value ?? 0)} · p.
                           {line.page ?? '—'}
+                          {line.sign_normalized && line.normalized_value !== undefined
+                            ? ` · parser sign normalized to ${formatEur(line.normalized_value)}`
+                            : ''}
                         </li>
                       ))}
                     </ul>

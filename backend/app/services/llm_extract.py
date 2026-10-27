@@ -33,7 +33,7 @@ from app.core.config import settings
 
 STATEMENTS = ("pnl", "balance_sheet", "cash_flow")
 TPM_LIMIT = 8000
-MAX_COMPLETION_TOKENS = 1800
+MAX_COMPLETION_TOKENS = 2400
 TOKEN_ESTIMATE_SAFETY_MARGIN = 200
 _TOKEN_RESERVATIONS: deque[Tuple[float, int]] = deque()
 _TOKEN_RESERVATION_LOCK = threading.Lock()
@@ -47,6 +47,7 @@ class StatementLine:
     value: float
     page: int
     source_text: str = ""
+    column: Optional[int] = None
     grounded: bool = False
     meta: Dict[str, Any] = field(default_factory=dict)
 
@@ -96,6 +97,7 @@ def _unwrap_payload(data: Dict[str, Any]) -> Any:
 
 def normalize_payload_with_discarded(
     data: Any,
+    expected_column: Optional[int] = None,
 ) -> Tuple[List[StatementLine], List[Dict[str, Any]]]:
     """Normalize model output while retaining why individual entries were skipped."""
     lines: List[StatementLine] = []
@@ -106,6 +108,17 @@ def normalize_payload_with_discarded(
     data = _unwrap_payload(data)
     if not isinstance(data, dict):
         return lines, [{"reason": "response_not_object", "entry": data}]
+
+    for statement, entries in data.items():
+        if statement not in STATEMENTS and isinstance(entries, list):
+            discarded.extend(
+                {
+                    "statement": str(statement),
+                    "reason": "unknown_statement",
+                    "entry": entry,
+                }
+                for entry in entries
+            )
 
     for statement in STATEMENTS:
         entries = data.get(statement)
@@ -154,6 +167,40 @@ def normalize_payload_with_discarded(
                     }
                 )
                 continue
+            raw_column = entry.get("column")
+            try:
+                returned_column = (
+                    int(raw_column) if raw_column is not None else expected_column
+                )
+            except (TypeError, ValueError):
+                discarded.append(
+                    {
+                        "statement": statement,
+                        "line_item": str(label).strip(),
+                        "value": value,
+                        "page": page,
+                        "reason": "invalid_column",
+                        "entry": entry,
+                    }
+                )
+                continue
+            if (
+                expected_column is not None
+                and returned_column is not None
+                and returned_column != expected_column
+            ):
+                discarded.append(
+                    {
+                        "statement": statement,
+                        "line_item": str(label).strip(),
+                        "value": value,
+                        "page": page,
+                        "column": returned_column,
+                        "reason": "wrong_column",
+                        "entry": entry,
+                    }
+                )
+                continue
             lines.append(
                 StatementLine(
                     statement=statement,
@@ -163,6 +210,11 @@ def normalize_payload_with_discarded(
                     source_text=str(
                         entry.get("source_text") or entry.get("text") or entry.get("line") or ""
                     ),
+                    column=returned_column,
+                    meta={
+                        "column_inferred_from_request": raw_column is None
+                        and expected_column is not None
+                    },
                 )
             )
     return lines, discarded
@@ -202,54 +254,23 @@ def ground_items(
 # --------------------------------------------------------------------------- #
 # LLM call
 # --------------------------------------------------------------------------- #
-PROMPT = """You are a financial statements extractor. You are given the text of a
-company report with page markers like [p.N].
-
-Return ONLY a JSON object with this exact schema:
-{
-  "pnl":           [{"line_item": "<label>", "value": <number>, "page": <int>, "source_text": "<verbatim line>"}],
-  "balance_sheet": [ ... same shape ... ],
-  "cash_flow":     [ ... same shape ... ]
-}
-
-Rules:
-- value is a plain number in euros: no currency symbol, no thousands separators. Use a negative number for losses/outflows exactly as printed.
-- page is the integer page number (from the [p.N] marker) where the line appears.
-- source_text must be copied verbatim from that page.
-- Include ONLY line items that are actually printed in the document. Never compute, infer, estimate or rename figures.
-- If a statement is not present, return an empty list for it.
-
-Document:
----
-{document}
----"""
-
 COLUMN_PROMPT = """You are a financial statements extractor. You are given the text of a
-company report with page markers like [p.N].
+company report with financial statements and page markers like [p.N].
 
-The report contains financial statements with multiple columns of figures. The
-{column_name} column is the one you must extract. The {other_name} column
-(comparative/prior period) should be IGNORED.
+Extract EVERY printed line item, including subtotals, zero values and cash-flow
+rows. Preserve each label exactly as printed; do not calculate, infer or rename.
+Use ONLY the {column_name} column. Ignore {other_name}. Keep negative signs.
 
 Return ONLY a JSON object with this exact schema:
 {
-  "pnl":           [{"line_item": "<label>", "value": <number>, "page": <int>, "source_text": "<verbatim line>"}],
+  "pnl":           [{"line_item": "<original label>", "value": <number>, "page": <int>, "column": {column_number}}],
   "balance_sheet": [ ... same shape ... ],
   "cash_flow":     [ ... same shape ... ]
 }
 
-Rules:
-- value is a plain number in euros: no currency symbol, no thousands separators. Use a negative number for losses/outflows exactly as printed.
-- page is the integer page number (from the [p.N] marker) where the line appears.
-- source_text must be copied verbatim from that page.
-- Include ONLY line items from the {column_name} column. Never compute, infer, estimate or rename figures.
-- If a statement is not present, return an empty list for it.
-- DO NOT include figures from the {other_name} column.
-
+Use a plain numeric value in euros. Do not include source_text.
 Document:
----
-{document}
----"""
+{document}"""
 
 
 def annotate_pages(pages: Sequence[Tuple[int, str]]) -> str:
@@ -273,8 +294,13 @@ def build_prompt(pages: Sequence[Tuple[int, str]], column: Optional[int]) -> str
         template = COLUMN_PROMPT.replace("{column_name}", column_name).replace(
             "{other_name}", other_name
         )
+        template = template.replace("{column_number}", str(column))
     else:
-        template = PROMPT
+        template = COLUMN_PROMPT.replace(
+            "{column_name}", "only the requested period"
+        ).replace("{other_name}", "all other columns").replace(
+            "{column_number}", "0"
+        )
     return template.replace("{document}", annotate_pages(pages))
 
 
@@ -627,7 +653,10 @@ async def extract_structured(
                 "warning": "LLM no disponible: JSON inválido; se usará solo regex.",
             },
         )
-    normalized, normalization_discarded = normalize_payload_with_discarded(data)
+    normalized, normalization_discarded = normalize_payload_with_discarded(
+        data,
+        expected_column=column,
+    )
     grounded, ungrounded = ground_items(pages, normalized)
     ground_discarded = [
         {
@@ -677,6 +706,7 @@ async def extract_structured(
                 "line_item": line.line_item,
                 "value": line.value,
                 "page": line.page,
+                "column": line.column,
                 "source_text": line.source_text,
             }
             for line in grounded

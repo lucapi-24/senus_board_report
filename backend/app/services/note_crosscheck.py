@@ -7,7 +7,9 @@ from typing import Any, Dict, List, Sequence, Tuple
 
 from app.services.llm_extract import parse_value
 
-NOTE_AMOUNT_RE = re.compile(r"(?:€\s*)?(-?\(?\d[\d,]*(?:\.\d+)?\)?)")
+NOTE_HEADING_RE = re.compile(r"^\s*\d+\.\s+[A-Z]", re.IGNORECASE)
+NOTES_EDITOR_RE = re.compile(r"^\s*notes to editors\b", re.IGNORECASE)
+NOTE_AMOUNT_RE = re.compile(r"€\s*(-?\(?\d[\d,]*(?:\.\d+)?\)?)\s*([kKmM])?")
 
 
 def find_note_mismatches(
@@ -18,15 +20,28 @@ def find_note_mismatches(
 ) -> List[Dict[str, Any]]:
     """Report note values that disagree with the parsed statement value."""
     warnings: List[Dict[str, Any]] = []
+    last_statement_page = max(statement_pages, default=0)
+    note_pages: List[Tuple[int, str]] = []
+    in_notes = False
+    for page_number, text in pages:
+        if page_number <= last_statement_page:
+            continue
+        lines = text.splitlines()
+        if any(NOTES_EDITOR_RE.search(line) for line in lines):
+            in_notes = False
+            continue
+        if any(NOTE_HEADING_RE.search(line) for line in lines):
+            in_notes = True
+        if in_notes:
+            note_pages.append((page_number, text))
+
     for statement in ("pnl", "balance_sheet", "cash_flow"):
         for label, raw_table_value in (deterministic.get(statement) or {}).items():
             table_value = parse_value(raw_table_value)
             if table_value is None:
                 continue
             label_re = re.compile(rf"\b{re.escape(label)}\b", re.IGNORECASE)
-            for page_number, text in pages:
-                if page_number in statement_pages:
-                    continue
+            for page_number, text in note_pages:
                 for line in text.splitlines():
                     match = label_re.search(line)
                     if not match:
@@ -35,7 +50,12 @@ def find_note_mismatches(
                     if amount_match is None:
                         continue
                     note_value = parse_value(amount_match.group(1))
-                    if note_value is None or abs(note_value - table_value) <= tolerance:
+                    suffix = (amount_match.group(2) or "").lower()
+                    multiplier = 1000 if suffix == "k" else 1_000_000 if suffix == "m" else 1
+                    if note_value is None:
+                        continue
+                    note_value *= multiplier
+                    if abs(abs(note_value) - abs(table_value)) <= tolerance:
                         continue
                     warnings.append(
                         {

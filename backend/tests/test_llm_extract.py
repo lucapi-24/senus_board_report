@@ -60,6 +60,36 @@ def test_normalization_records_discarded_entries_with_reasons():
     ]
 
 
+def test_normalization_records_unrecognized_statement_sections():
+    lines, discarded = normalize_payload_with_discarded(
+        {"financial_position": [{"line_item": "Assets", "value": 500, "page": 5}]}
+    )
+
+    assert lines == []
+    assert discarded == [
+        {
+            "statement": "financial_position",
+            "reason": "unknown_statement",
+            "entry": {"line_item": "Assets", "value": 500, "page": 5},
+        }
+    ]
+
+
+def test_normalization_rejects_an_explicitly_wrong_column():
+    lines, discarded = normalize_payload_with_discarded(
+        {
+            "pnl": [
+                {"line_item": "Revenue", "value": 100, "page": 5, "column": 0}
+            ]
+        },
+        expected_column=1,
+    )
+
+    assert lines == []
+    assert discarded[0]["reason"] == "wrong_column"
+    assert discarded[0]["column"] == 0
+
+
 def test_ground_items_accepts_values_present_on_their_page():
     pages = [(5, "Revenue 354,813\nGoodwill 669,550")]
     lines = [
@@ -300,9 +330,11 @@ def test_prompt_budget_and_reasoning_effort_are_constrained():
     )
 
     kwargs = client.last_kwargs()
-    assert kwargs["max_tokens"] <= 1800
+    assert kwargs["max_tokens"] <= 2400
     assert kwargs["extra_body"]["reasoning_effort"] == "low"
+    assert '"source_text":' not in kwargs["messages"][0]["content"]
     assert result.trace["estimated_request_tokens"] <= 8000
+    assert result.trace["returned_lines"][0]["column"] == 0
 
 
 def test_token_budget_waits_until_prior_reservation_expires():

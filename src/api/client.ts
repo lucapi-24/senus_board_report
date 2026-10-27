@@ -226,6 +226,8 @@ export interface LLMCallTrace {
     statement?: string
     line_item?: string
     value?: number
+    normalized_value?: number
+    sign_normalized?: boolean
     page?: number
   }>
   discarded_lines?: Array<Record<string, unknown>>
