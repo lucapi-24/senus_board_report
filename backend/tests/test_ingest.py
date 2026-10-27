@@ -1,3 +1,4 @@
+import json
 from datetime import date
 
 import pytest
@@ -8,6 +9,7 @@ from app.services.ingest import (
     _months_between,
     _provenance,
     build_proposal,
+    _store_period_proposal,
     require_replacement_confirmation,
 )
 from app.services.llm_extract import StatementLine
@@ -53,6 +55,17 @@ def test_llm_only_item_is_reviewable_but_excluded_from_kpis():
 
     assert item.status == "llm_only"
     assert _chosen(result)["pnl"] == {}
+
+
+def test_llm_call_history_is_persisted_per_period_without_overwriting():
+    first = build_proposal(_result(), {"call_id": "call-1", "period_label": "HY2026"})
+    stored = _store_period_proposal(None, "HY2026", first)
+    second = build_proposal(_result(), {"call_id": "call-2", "period_label": "HY2026"})
+
+    updated = json.loads(_store_period_proposal(stored, "HY2026", second))
+
+    assert [call["call_id"] for call in updated["llm_calls"]] == ["call-1", "call-2"]
+    assert updated["periods"]["HY2026"]["llm_trace"]["call_id"] == "call-2"
 
 
 def test_months_between():

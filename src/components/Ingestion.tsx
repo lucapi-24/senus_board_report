@@ -6,6 +6,7 @@ import {
   type DetectedPeriod,
   type DocumentDetail,
   type DocumentSummary,
+  type LLMCallTrace,
   type Period,
   type PeriodDetail,
   type ReconciledItem,
@@ -301,6 +302,13 @@ export function Ingestion({ role, onDataChanged }: { role?: string; onDataChange
       ? detail.reviews_by_period[period.label] ?? null
       : detail?.review ?? null
     : null
+  const periodCalls =
+    detail?.llm_calls?.filter((call) => call.period_label === period?.label) ?? []
+  const visibleLlmCalls = periodCalls.length
+    ? periodCalls
+    : review?.llm_trace
+      ? [review.llm_trace]
+      : []
   const hasContingentConsideration =
     detail?.reviews_by_period
       ? Object.values(detail.reviews_by_period).some((periodReview) =>
@@ -648,6 +656,103 @@ export function Ingestion({ role, onDataChanged }: { role?: string; onDataChange
                   )}
                 </div>
               </div>
+
+              {visibleLlmCalls.map((trace: LLMCallTrace, index) => (
+                <section
+                  className="callout callout--info"
+                  aria-label={`LLM extraction call ${index + 1}`}
+                  key={trace.call_id ?? `${trace.period_label}-${index}`}
+                >
+                  <strong>LLM extraction · {trace.status ?? 'unknown'}</strong>
+                  {trace.warning && (
+                    <p role={trace.status === 'regex_only' ? 'alert' : 'status'}>
+                      {trace.warning}
+                    </p>
+                  )}
+                  {trace.error_code && (
+                    <p className="small">
+                      Error {trace.error_code}
+                      {trace.error_message ? `: ${trace.error_message}` : ''}
+                    </p>
+                  )}
+                  <p className="small">
+                    Document {trace.document_id ?? detail.id} · period {trace.period_label ?? period.label}
+                    {' · '}model {trace.model ?? 'n/d'}
+                    {' · '}result {trace.api_result ?? 'n/d'}
+                    {trace.completed_at ? ` · completed ${trace.completed_at}` : ''}
+                  </p>
+                  <p className="small">
+                    Actual tokens: input {trace.prompt_tokens ?? 'n/d'}, output{' '}
+                    {trace.completion_tokens ?? 'n/d'}, total {trace.total_tokens ?? 'n/d'}
+                    {' · '}estimated input {trace.estimated_input_tokens ?? 'n/d'}, output cap{' '}
+                    {trace.max_tokens ?? 'n/d'}
+                    {' · '}latency {trace.latency_ms ?? 'n/d'} ms
+                    {' · '}attempts {trace.attempts ?? 'n/d'}
+                    {' · '}pages {trace.statement_pages?.join(', ') ?? 'n/d'}
+                  </p>
+                  <p className="small">
+                    Items: {trace.accepted_count ?? trace.returned_lines?.length ?? 0} accepted,{' '}
+                    {trace.discarded_count ?? trace.discarded_lines?.length ?? 0} discarded
+                    {trace.expected_count !== undefined
+                      ? `, ${trace.grounded_count ?? 0}/${trace.expected_count} expected grounded`
+                      : ''}
+                    {trace.rate_limit_wait_ms
+                      ? ` · waited ${trace.rate_limit_wait_ms} ms for the TPM budget`
+                      : ''}
+                  </p>
+                  {Object.values(trace.missing_expected ?? {}).some((labels) => labels.length > 0) && (
+                    <p className="small">
+                      Missing from LLM output:{' '}
+                      {Object.values(trace.missing_expected ?? {})
+                        .flat()
+                        .join(', ')}
+                    </p>
+                  )}
+                  <details>
+                    <summary>Returned and discarded lines</summary>
+                    <strong>Attempts</strong>
+                    <ul>
+                      {(trace.attempts_detail ?? []).map((attempt, attemptIndex) => (
+                        <li key={`attempt-${attemptIndex}`}>
+                          Attempt {String(attempt.attempt ?? attemptIndex + 1)} ·{' '}
+                          {String(attempt.result ?? 'unknown')}
+                          {attempt.error_code ? ` · error ${String(attempt.error_code)}` : ''}
+                          {attempt.latency_ms !== undefined
+                            ? ` · ${String(attempt.latency_ms)} ms`
+                            : ''}
+                          {attempt.retry_delay_seconds !== undefined
+                            ? ` · retry after ${String(attempt.retry_delay_seconds)} s`
+                            : ''}
+                        </li>
+                      ))}
+                    </ul>
+                    <strong>Returned</strong>
+                    <ul>
+                      {(trace.returned_lines ?? []).map((line, lineIndex) => (
+                        <li key={`returned-${lineIndex}`}>
+                          {line.statement} · {line.line_item} · {formatEur(line.value ?? 0)} · p.
+                          {line.page ?? '—'}
+                        </li>
+                      ))}
+                    </ul>
+                    <strong>Discarded</strong>
+                    <ul>
+                      {(trace.discarded_lines ?? []).map((line, lineIndex) => (
+                        <li key={`discarded-${lineIndex}`}>
+                          {String(line.line_item ?? line.statement ?? 'Entry')}: {String(line.reason ?? 'unknown reason')}
+                          {line.page !== undefined ? ` · p.${String(line.page)}` : ''}
+                        </li>
+                      ))}
+                    </ul>
+                    {trace.raw_response && (
+                      <details>
+                        <summary>Raw model response</summary>
+                        <pre>{trace.raw_response}</pre>
+                      </details>
+                    )}
+                  </details>
+                </section>
+              ))}
 
               {review.note_warnings?.length ? (
                 <div className="callout callout--error" role="alert">

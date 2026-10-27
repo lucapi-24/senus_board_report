@@ -190,6 +190,46 @@ export interface ReviewPayload {
   cash_flow: ReconciledItem[]
   summary: { matched: number; flagged: number; total: number }
   note_warnings?: NoteWarning[]
+  llm_trace?: LLMCallTrace
+}
+
+export interface LLMCallTrace {
+  call_id?: string
+  document_id?: number | null
+  period_label?: string
+  model?: string
+  status?: string
+  api_result?: string
+  error_code?: string | null
+  error_message?: string | null
+  warning?: string | null
+  completed_at?: string
+  latency_ms?: number | null
+  rate_limit_wait_ms?: number | null
+  attempts?: number
+  attempts_detail?: Array<Record<string, unknown>>
+  prompt_tokens?: number | null
+  completion_tokens?: number | null
+  total_tokens?: number | null
+  estimated_input_tokens?: number | null
+  max_tokens?: number | null
+  estimated_request_tokens?: number | null
+  expected_count?: number
+  grounded_count?: number
+  raw_item_count?: number
+  normalized_item_count?: number
+  accepted_count?: number
+  discarded_count?: number
+  statement_pages?: number[]
+  missing_expected?: Record<string, string[]>
+  returned_lines?: Array<{
+    statement?: string
+    line_item?: string
+    value?: number
+    page?: number
+  }>
+  discarded_lines?: Array<Record<string, unknown>>
+  raw_response?: string
 }
 
 export interface NoteWarning {
@@ -225,6 +265,7 @@ export interface DocumentSummary {
 export interface DocumentDetail extends DocumentSummary {
   review: ReviewPayload | null
   reviews_by_period?: Record<string, ReviewPayload> | null
+  llm_calls?: LLMCallTrace[]
 }
 
 async function get<T>(path: string): Promise<T> {

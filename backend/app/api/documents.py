@@ -194,6 +194,8 @@ async def get_document(
             stored_review = None
         if isinstance(stored_review, dict) and isinstance(stored_review.get("periods"), dict):
             detail.reviews_by_period = stored_review["periods"]
+            if isinstance(stored_review.get("llm_calls"), list):
+                detail.llm_calls = stored_review["llm_calls"]
         elif stored_review is not None:
             detail.review = stored_review
     return detail

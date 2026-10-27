@@ -45,6 +45,7 @@ class DocumentResponse(BaseModel):
 class DocumentDetailResponse(DocumentResponse):
     review: Optional[Dict[str, Any]] = None
     reviews_by_period: Optional[Dict[str, Dict[str, Any]]] = None
+    llm_calls: List[Dict[str, Any]] = Field(default_factory=list)
 
 
 class DocumentUpdate(BaseModel):

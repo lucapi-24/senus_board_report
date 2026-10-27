@@ -22,6 +22,7 @@ import math
 import re
 import threading
 import time
+import uuid
 from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -408,11 +409,21 @@ async def extract_structured(
     table column (0 = current/leftmost, 1 = comparative, etc.) and ignore the
     other columns.
     """
+    attempts_detail: List[Dict[str, Any]] = []
+
+    def finish(lines: List[StatementLine], trace: Dict[str, Any]) -> LLMExtractionResult:
+        trace.setdefault("document_id", document_id)
+        trace.setdefault("period_label", period_label)
+        trace.setdefault("call_id", uuid.uuid4().hex)
+        trace.setdefault("completed_at", datetime.now(timezone.utc).isoformat())
+        trace.setdefault("attempts_detail", attempts_detail)
+        return LLMExtractionResult(lines=lines, trace=trace)
+
     client = client or build_client()
     if client is None:
-        return LLMExtractionResult(
-            lines=[],
-            trace={
+        return finish(
+            [],
+            {
                 "status": "regex_only",
                 "api_result": "not_configured",
                 "model": settings.GROQ_MODEL,
@@ -427,9 +438,9 @@ async def extract_structured(
 
     prompt = build_prompt(pages, column)
     if not pages:
-        return LLMExtractionResult(
-            lines=[],
-            trace={
+        return finish(
+            [],
+            {
                 "status": "regex_only",
                 "api_result": "not_called",
                 "error_code": "no_statement_pages",
@@ -448,9 +459,9 @@ async def extract_structured(
     )
     request_budget = estimated_input_tokens + completion_tokens + TOKEN_ESTIMATE_SAFETY_MARGIN
     if completion_tokens < 400 or request_budget > TPM_LIMIT:
-        return LLMExtractionResult(
-            lines=[],
-            trace={
+        return finish(
+            [],
+            {
                 "status": "regex_only",
                 "api_result": "not_called",
                 "error_code": "estimated_request_exceeds_tpm",
@@ -489,6 +500,7 @@ async def extract_structured(
     attempts = 0
     for attempt in range(max_attempts):
         attempts += 1
+        attempt_started = perf_counter()
         try:
             response = await client.chat.completions.create(
                 model=settings.GROQ_MODEL,
@@ -498,13 +510,38 @@ async def extract_structured(
                 response_format={"type": "json_object"},
                 **reasoning,
             )
+            attempts_detail.append(
+                {
+                    "attempt": attempts,
+                    "result": "ok",
+                    "latency_ms": round((perf_counter() - attempt_started) * 1000),
+                }
+            )
             break
         except Exception as exc:  # transient rate limits / network blips
             last_error = exc
             if not _retryable(exc) or attempt + 1 >= max_attempts:
+                attempts_detail.append(
+                    {
+                        "attempt": attempts,
+                        "result": "error",
+                        "error_code": str(_status_code(exc) or type(exc).__name__),
+                        "latency_ms": round((perf_counter() - attempt_started) * 1000),
+                    }
+                )
                 break
             delay = _retry_after_seconds(exc)
-            await sleep(delay if delay is not None else 1.5 * (attempt + 1))
+            delay = delay if delay is not None else 1.5 * (attempt + 1)
+            attempts_detail.append(
+                {
+                    "attempt": attempts,
+                    "result": "error",
+                    "error_code": str(_status_code(exc) or type(exc).__name__),
+                    "latency_ms": round((perf_counter() - attempt_started) * 1000),
+                    "retry_delay_seconds": delay,
+                }
+            )
+            await sleep(delay)
     if response is None:
         if last_error:
             elapsed_ms = round((perf_counter() - started) * 1000)
@@ -525,10 +562,10 @@ async def extract_structured(
                 "discarded_lines": [],
                 "warning": f"LLM no disponible: {last_error}; se usará solo regex.",
             }
-            return LLMExtractionResult(lines=[], trace=trace)
-        return LLMExtractionResult(
-            lines=[],
-            trace={
+            return finish([], trace)
+        return finish(
+            [],
+            {
                 "status": "regex_only",
                 "api_result": "error",
                 "error_code": "no_response",
@@ -546,9 +583,9 @@ async def extract_structured(
     elapsed_ms = round((perf_counter() - started) * 1000)
     raw_response = response.choices[0].message.content or ""
     if not raw_response.strip():
-        return LLMExtractionResult(
-            lines=[],
-            trace={
+        return finish(
+            [],
+            {
                 "status": "regex_only",
                 "api_result": "ok",
                 "error_code": "empty_response",
@@ -568,9 +605,9 @@ async def extract_structured(
     try:
         data = json.loads(raw_response)
     except json.JSONDecodeError as exc:
-        return LLMExtractionResult(
-            lines=[],
-            trace={
+        return finish(
+            [],
+            {
                 "status": "regex_only",
                 "api_result": "error",
                 "error_code": "invalid_json",
@@ -587,7 +624,7 @@ async def extract_structured(
                     {"reason": "invalid_json", "entry": raw_response[:2000]}
                 ],
                 "raw_response": raw_response,
-                "warning": "LLM returned invalid JSON; extraction will use regex only.",
+                "warning": "LLM no disponible: JSON inválido; se usará solo regex.",
             },
         )
     normalized, normalization_discarded = normalize_payload_with_discarded(data)
@@ -612,6 +649,7 @@ async def extract_structured(
         "status": "ok" if grounded else "regex_only",
         "api_result": "ok",
         "model": settings.GROQ_MODEL,
+        "error_code": None,
         "latency_ms": elapsed_ms,
         "rate_limit_wait_ms": rate_wait_ms,
         "attempts": attempts,
@@ -667,4 +705,4 @@ async def extract_structured(
         len(grounded),
         len(discarded),
     )
-    return LLMExtractionResult(lines=grounded, trace=trace)
+    return finish(grounded, trace)

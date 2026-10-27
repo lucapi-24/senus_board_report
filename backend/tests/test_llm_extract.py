@@ -104,6 +104,11 @@ def _fake_client(content: str, errors=None):
     class _Response:
         def __init__(self):
             self.choices = [_Choice()]
+            self.usage = type(
+                "Usage",
+                (),
+                {"prompt_tokens": 8, "completion_tokens": 12, "total_tokens": 20},
+            )()
 
     class _Completions:
         calls = 0
@@ -142,11 +147,18 @@ def test_extract_structured_returns_only_grounded_lines():
             "HY2026",
             client=_fake_client(content),
             reserve_budget=_no_reserve,
+            document_id=42,
         )
     )
     assert [line.line_item for line in result.lines] == ["Revenue"]
     assert result.lines[0].grounded is True
     assert result.trace["accepted_count"] == 1
+    assert result.trace["document_id"] == 42
+    assert result.trace["period_label"] == "HY2026"
+    assert result.trace["prompt_tokens"] == 8
+    assert result.trace["completion_tokens"] == 12
+    assert result.trace["total_tokens"] == 20
+    assert result.trace["attempts_detail"][0]["result"] == "ok"
     assert result.trace["discarded_lines"] == [
         {
             "statement": "pnl",

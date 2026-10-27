@@ -84,12 +84,19 @@ def _store_period_proposal(
 ) -> str:
     """Keep each extracted period's review proposal instead of overwriting it."""
     reviews: Dict[str, Any] = {}
+    call_history: List[Dict[str, Any]] = []
     if raw_json:
         stored = json.loads(raw_json)
-        if isinstance(stored, dict) and isinstance(stored.get("periods"), dict):
-            reviews = stored["periods"]
+        if isinstance(stored, dict):
+            if isinstance(stored.get("periods"), dict):
+                reviews = stored["periods"]
+            if isinstance(stored.get("llm_calls"), list):
+                call_history = stored["llm_calls"]
     reviews[label] = proposal
-    return json.dumps({"periods": reviews})
+    llm_trace = proposal.get("llm_trace")
+    if isinstance(llm_trace, dict):
+        call_history.append(llm_trace)
+    return json.dumps({"periods": reviews, "llm_calls": call_history})
 
 
 def _chosen(result: Dict[str, Any]) -> Dict[str, Dict[str, float]]:
@@ -356,6 +363,29 @@ async def ingest_document(
             document_id=doc.id,
         )
         result = reconcile(tables, llm_result.lines, pages=pages)
+        llm_trace = llm_result.trace
+        llm_trace["statement_pages"] = [page for page, _text in llm_pages]
+        llm_trace["expected_count"] = expected_count
+        llm_trace["grounded_count"] = sum(
+            item.source in ("both", "llm")
+            for statement in STATEMENTS
+            for item in result[statement]
+        )
+        llm_trace["missing_expected"] = {
+            statement: [
+                item.line_item
+                for item in result[statement]
+                if item.status == "regex_only"
+            ]
+            for statement in STATEMENTS
+        }
+        missing_count = sum(len(labels) for labels in llm_trace["missing_expected"].values())
+        if llm_trace.get("status") != "regex_only" and missing_count:
+            llm_trace["status"] = "partial"
+            llm_trace["warning"] = (
+                f"LLM devolvió {llm_trace['grounded_count']} de {expected_count} "
+                f"partidas esperadas; faltan {missing_count} y quedan para revisión."
+            )
         proposal = build_proposal(result, llm_result.trace)
         statement_pages = {
             page
