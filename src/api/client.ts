@@ -173,7 +173,7 @@ export interface PeriodCompareResult {
 export interface ReconciledItem {
   statement: FinancialStatement
   line_item: string
-  value: number
+  value: number | null
   status: string
   confidence: number
   confidence_factors?: Record<string, boolean | null>

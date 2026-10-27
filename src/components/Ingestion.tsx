@@ -783,7 +783,7 @@ export function Ingestion({ role, onDataChanged }: { role?: string; onDataChange
                   merged.push({
                     statement: 'balance_sheet',
                     line_item: 'Contingent consideration',
-                    value: 0,
+                    value: null,
                     status: 'not_reported',
                     confidence: 0,
                     page: null,

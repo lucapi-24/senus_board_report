@@ -38,4 +38,8 @@ describe('formatEur', () => {
     expect(out).toContain('485,144')
     expect(out).toContain('-')
   })
+
+  it('renders missing amounts as n/d instead of zero', () => {
+    expect(formatEur(null)).toBe('n/d')
+  })
 })

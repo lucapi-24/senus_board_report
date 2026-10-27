@@ -14,7 +14,8 @@ def test_period_proposals_are_preserved_separately():
         "periods": {
             "HY2026": {"balance_sheet": ["current"]},
             "HY2025": {"balance_sheet": ["comparative"]},
-        }
+        },
+        "llm_calls": [],
     }
 
 
