@@ -74,6 +74,24 @@ def test_expected_coverage_excludes_llm_only_items():
     assert missing_expected["pnl"] == ["Cost of sales"]
 
 
+def test_expected_coverage_excludes_unlabelled_balance_subtotals():
+    result = reconcile(
+        {
+            "balance_sheet": {
+                "Goodwill": "669550",
+                "Total Fixed Assets": "951321",
+                "Total Current Assets": "923339",
+            }
+        },
+        [StatementLine("balance_sheet", "Goodwill", 669550, 5)],
+    )
+
+    grounded_count, missing_expected = _expected_llm_coverage(result)
+
+    assert grounded_count == 1
+    assert missing_expected["balance_sheet"] == []
+
+
 def test_llm_call_history_is_persisted_per_period_without_overwriting():
     first = build_proposal(_result(), {"call_id": "call-1", "period_label": "HY2026"})
     stored = _store_period_proposal(None, "HY2026", first)

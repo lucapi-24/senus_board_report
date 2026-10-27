@@ -134,6 +134,10 @@ def _expected_llm_coverage(
             item.line_item
             for item in result[statement]
             if item.status == "regex_only"
+            and not (
+                statement == "balance_sheet"
+                and item.line_item in BALANCE_SUBTOTALS
+            )
         ]
         for statement in STATEMENTS
     }
