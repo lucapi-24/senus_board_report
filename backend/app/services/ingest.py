@@ -67,10 +67,14 @@ def read_pages(pdf_path: str) -> List[Tuple[int, str]]:
     return pages
 
 
-def build_proposal(result: Dict[str, Any]) -> Dict[str, Any]:
+def build_proposal(
+    result: Dict[str, Any], llm_trace: Dict[str, Any] | None = None
+) -> Dict[str, Any]:
     """The review payload shown to a human (and stored on the document)."""
     proposal: Dict[str, Any] = {statement: [i.to_dict() for i in result[statement]] for statement in STATEMENTS}
     proposal["summary"] = result["summary"]
+    if llm_trace is not None:
+        proposal["llm_trace"] = llm_trace
     return proposal
 
 
@@ -339,9 +343,9 @@ async def ingest_document(
             use_column = 0
 
         tables = parse_tables(pages, column=use_column)
-        llm_lines = await extract_structured(pages, use_label or "", column=use_column)
-        result = reconcile(tables, llm_lines, pages=pages)
-        proposal = build_proposal(result)
+        llm_result = await extract_structured(pages, use_label or "", column=use_column)
+        result = reconcile(tables, llm_result.lines, pages=pages)
+        proposal = build_proposal(result, llm_result.trace)
         await _persist(
             db,
             doc,

@@ -6,6 +6,7 @@ from app.services.llm_extract import (
     extract_structured,
     ground_items,
     normalize_payload,
+    normalize_payload_with_discarded,
     parse_value,
 )
 
@@ -33,6 +34,27 @@ def test_normalize_payload_reads_the_three_statements():
     assert by_key[("pnl", "Revenue")].value == 354813.0
     assert by_key[("pnl", "Revenue")].page == 5
     assert by_key[("balance_sheet", "Goodwill")].value == 669550.0
+
+
+def test_normalization_records_discarded_entries_with_reasons():
+    lines, discarded = normalize_payload_with_discarded(
+        {
+            "pnl": [
+                {"line_item": "Revenue", "value": "not a number", "page": 5},
+                {"line_item": "Unpaged", "value": 20},
+                {"value": 30, "page": 5},
+                "invalid entry",
+            ]
+        }
+    )
+
+    assert lines == []
+    assert [entry["reason"] for entry in discarded] == [
+        "invalid_value",
+        "invalid_page",
+        "missing_label",
+        "entry_not_object",
+    ]
 
 
 def test_ground_items_accepts_values_present_on_their_page():
@@ -100,6 +122,16 @@ def test_extract_structured_returns_only_grounded_lines():
         }
     )
     pages = [(5, "Revenue 354,813")]
-    lines = asyncio.run(extract_structured(pages, "HY2026", client=_fake_client(content)))
-    assert [line.line_item for line in lines] == ["Revenue"]
-    assert lines[0].grounded is True
+    result = asyncio.run(extract_structured(pages, "HY2026", client=_fake_client(content)))
+    assert [line.line_item for line in result.lines] == ["Revenue"]
+    assert result.lines[0].grounded is True
+    assert result.trace["accepted_count"] == 1
+    assert result.trace["discarded_lines"] == [
+        {
+            "statement": "pnl",
+            "line_item": "Made up",
+            "value": 999999.0,
+            "page": 5,
+            "reason": "value_not_found_on_claimed_page",
+        }
+    ]
