@@ -14,12 +14,15 @@ Two guarantees live here:
 
 from __future__ import annotations
 
+import asyncio
+import email.utils
 import json
 import logging
 import re
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from time import perf_counter
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Awaitable, Callable, Dict, List, Optional, Sequence, Tuple
 
 from app.core.config import settings
 
@@ -251,12 +254,56 @@ def build_client():
     return AsyncOpenAI(base_url=settings.GROQ_BASE_URL, api_key=settings.GROQ_API_KEY)
 
 
+def _status_code(error: Exception) -> Optional[int]:
+    value = getattr(error, "status_code", None)
+    if value is None:
+        value = getattr(getattr(error, "response", None), "status_code", None)
+    try:
+        return int(value) if value is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _retry_after_seconds(error: Exception) -> Optional[float]:
+    response = getattr(error, "response", None)
+    headers = getattr(response, "headers", {}) or {}
+    normalized = {str(key).lower(): str(value).strip() for key, value in headers.items()}
+    retry_after = normalized.get("retry-after")
+    if retry_after:
+        try:
+            return max(0.0, float(retry_after))
+        except ValueError:
+            try:
+                target = email.utils.parsedate_to_datetime(retry_after)
+                if target.tzinfo is None:
+                    target = target.replace(tzinfo=timezone.utc)
+                return max(0.0, (target - datetime.now(timezone.utc)).total_seconds())
+            except (TypeError, ValueError, OverflowError):
+                pass
+    for header in ("x-ratelimit-reset-tokens", "x-ratelimit-reset-requests"):
+        value = normalized.get(header)
+        if value:
+            match = re.fullmatch(r"([\d.]+)\s*(ms|s|m)?", value, re.IGNORECASE)
+            if match:
+                amount = float(match.group(1))
+                unit = (match.group(2) or "s").lower()
+                return amount / 1000 if unit == "ms" else amount * (60 if unit == "m" else 1)
+    return None
+
+
+def _retryable(error: Exception) -> bool:
+    status = _status_code(error)
+    return status is None or status == 408 or status == 429 or status >= 500
+
+
 async def extract_structured(
     pages: Sequence[Tuple[int, str]],
     period_label: str,
     client: Any = None,
     max_attempts: int = 3,
     column: Optional[int] = None,
+    expected_count: Optional[int] = None,
+    sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
 ) -> LLMExtractionResult:
     """Ask the model for the statements and return the grounded lines.
 
@@ -274,11 +321,10 @@ async def extract_structured(
                 "model": settings.GROQ_MODEL,
                 "returned_lines": [],
                 "discarded_lines": [],
-                "warning": "LLM is not configured; extraction will use regex only.",
+                "error_code": "missing_api_key",
+                "warning": "LLM no disponible: falta configurar la clave de Groq; se usará solo regex.",
             },
         )
-
-    import asyncio
 
     if column is not None:
         column_names = {0: "current period (leftmost)", 1: "comparative prior-period (second)", 2: "third comparative"}
@@ -292,7 +338,9 @@ async def extract_structured(
     response = None
     last_error: Optional[Exception] = None
     started = perf_counter()
+    attempts = 0
     for attempt in range(max_attempts):
+        attempts += 1
         try:
             response = await client.chat.completions.create(
                 model=settings.GROQ_MODEL,
@@ -304,7 +352,10 @@ async def extract_structured(
             break
         except Exception as exc:  # transient rate limits / network blips
             last_error = exc
-            await asyncio.sleep(1.5 * (attempt + 1))
+            if not _retryable(exc) or attempt + 1 >= max_attempts:
+                break
+            delay = _retry_after_seconds(exc)
+            await sleep(delay if delay is not None else 1.5 * (attempt + 1))
     if response is None:
         if last_error:
             elapsed_ms = round((perf_counter() - started) * 1000)
@@ -313,13 +364,13 @@ async def extract_structured(
                 "status": "regex_only",
                 "api_result": "error",
                 "error_code": str(status_code or type(last_error).__name__),
-                "error_message": str(last_error),
+                "error_message": str(last_error)[:1000],
                 "model": settings.GROQ_MODEL,
                 "latency_ms": elapsed_ms,
-                "attempts": max_attempts,
+                "attempts": attempts,
                 "returned_lines": [],
                 "discarded_lines": [],
-                "warning": f"LLM is unavailable: {last_error}",
+                "warning": f"LLM no disponible: {last_error}; se usará solo regex.",
             }
             return LLMExtractionResult(lines=[], trace=trace)
         return LLMExtractionResult(
@@ -331,12 +382,28 @@ async def extract_structured(
                 "model": settings.GROQ_MODEL,
                 "returned_lines": [],
                 "discarded_lines": [],
-                "warning": "LLM returned no response; extraction will use regex only.",
+                "warning": "LLM no disponible: no hubo respuesta; se usará solo regex.",
             },
         )
 
     elapsed_ms = round((perf_counter() - started) * 1000)
     raw_response = response.choices[0].message.content or ""
+    if not raw_response.strip():
+        return LLMExtractionResult(
+            lines=[],
+            trace={
+                "status": "regex_only",
+                "api_result": "ok",
+                "error_code": "empty_response",
+                "model": settings.GROQ_MODEL,
+                "latency_ms": elapsed_ms,
+                "attempts": attempts,
+                "returned_lines": [],
+                "discarded_lines": [],
+                "raw_response": raw_response,
+                "warning": "LLM no disponible: la respuesta estaba vacía; se usará solo regex.",
+            },
+        )
     try:
         data = json.loads(raw_response)
     except json.JSONDecodeError as exc:
@@ -349,6 +416,7 @@ async def extract_structured(
                 "error_message": str(exc),
                 "model": settings.GROQ_MODEL,
                 "latency_ms": elapsed_ms,
+                "attempts": attempts,
                 "returned_lines": [],
                 "discarded_lines": [
                     {"reason": "invalid_json", "entry": raw_response[:2000]}
@@ -380,6 +448,7 @@ async def extract_structured(
         "api_result": "ok",
         "model": settings.GROQ_MODEL,
         "latency_ms": elapsed_ms,
+        "attempts": attempts,
         "prompt_tokens": getattr(usage, "prompt_tokens", None),
         "completion_tokens": getattr(usage, "completion_tokens", None),
         "total_tokens": getattr(usage, "total_tokens", None),
@@ -410,12 +479,15 @@ async def extract_structured(
     }
     if not grounded:
         trace["warning"] = (
-            "LLM returned no grounded financial statement items; extraction will use regex only."
+            "LLM no disponible: no devolvió cifras fundamentadas; se usará solo regex."
         )
-    elif discarded:
+    elif discarded or (expected_count is not None and len(grounded) < expected_count):
+        missing_count = max((expected_count or 0) - len(grounded), 0)
+        trace["status"] = "partial"
         trace["warning"] = (
-            f"LLM returned {len(grounded)} grounded items and "
-            f"{len(discarded)} items were discarded."
+            f"LLM devolvió {len(grounded)} partidas fundamentadas de "
+            f"{expected_count if expected_count is not None else len(normalized)} esperadas; "
+            f"{len(discarded)} descartadas y {missing_count} ausentes."
         )
     logger.info(
         "LLM extraction result model=%s period=%s latency_ms=%s "

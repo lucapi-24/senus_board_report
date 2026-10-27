@@ -344,7 +344,15 @@ async def ingest_document(
             use_column = 0
 
         tables = parse_tables(pages, column=use_column)
-        llm_result = await extract_structured(pages, use_label or "", column=use_column)
+        expected_count = sum(
+            len(tables.get(statement, {}) or {}) for statement in STATEMENTS
+        )
+        llm_result = await extract_structured(
+            pages,
+            use_label or "",
+            column=use_column,
+            expected_count=expected_count,
+        )
         result = reconcile(tables, llm_result.lines, pages=pages)
         proposal = build_proposal(result, llm_result.trace)
         statement_pages = {

@@ -87,7 +87,7 @@ def test_ground_items_rejects_hallucinated_figures():
     assert {x.line_item for x in ungrounded} == {"Invented", "Wrong page"}
 
 
-def _fake_client(content: str):
+def _fake_client(content: str, errors=None):
     """Stub returning a fixed payload, so no network is touched."""
 
     class _Message:
@@ -103,13 +103,21 @@ def _fake_client(content: str):
             self.choices = [_Choice()]
 
     class _Completions:
+        calls = 0
+
         async def create(self, *args, **kwargs):
+            self.calls += 1
+            if errors:
+                error = errors.pop(0)
+                raise error
             return _Response()
 
     class _Chat:
         completions = _Completions()
 
-    return type("Client", (), {"chat": _Chat()})()
+    client = type("Client", (), {"chat": _Chat()})()
+    client.calls = lambda: client.chat.completions.calls
+    return client
 
 
 def test_extract_structured_returns_only_grounded_lines():
@@ -135,3 +143,94 @@ def test_extract_structured_returns_only_grounded_lines():
             "reason": "value_not_found_on_claimed_page",
         }
     ]
+
+
+def test_413_is_not_retried_and_falls_back_to_regex():
+    class ProviderError(Exception):
+        status_code = 413
+
+    client = _fake_client("", [ProviderError("request too large")])
+
+    result = asyncio.run(
+        extract_structured(
+            [(5, "Revenue 100")],
+            "HY2026",
+            client=client,
+            sleep=_no_sleep,
+        )
+    )
+
+    assert client.calls() == 1
+    assert result.lines == []
+    assert result.trace["status"] == "regex_only"
+    assert result.trace["error_code"] == "413"
+
+
+def test_429_waits_for_retry_after_before_retrying():
+    class ProviderError(Exception):
+        status_code = 429
+
+        def __init__(self):
+            self.response = type("Response", (), {"headers": {"retry-after": "7"}})()
+
+    client = _fake_client(
+        json.dumps({"pnl": [{"line_item": "Revenue", "value": 100, "page": 5}]}),
+        [ProviderError()],
+    )
+    waits = []
+
+    async def record_wait(seconds):
+        waits.append(seconds)
+
+    result = asyncio.run(
+        extract_structured(
+            [(5, "Revenue 100")],
+            "HY2026",
+            client=client,
+            sleep=record_wait,
+        )
+    )
+
+    assert waits == [7.0]
+    assert client.calls() == 2
+    assert result.lines[0].line_item == "Revenue"
+
+
+def test_invalid_json_falls_back_without_retrying():
+    client = _fake_client("{not valid json")
+
+    result = asyncio.run(
+        extract_structured(
+            [(5, "Revenue 100")],
+            "HY2026",
+            client=client,
+            sleep=_no_sleep,
+        )
+    )
+
+    assert client.calls() == 1
+    assert result.trace["status"] == "regex_only"
+    assert result.trace["error_code"] == "invalid_json"
+
+
+def test_partial_response_is_warned_and_reported():
+    client = _fake_client(
+        json.dumps({"pnl": [{"line_item": "Revenue", "value": 100, "page": 5}]})
+    )
+
+    result = asyncio.run(
+        extract_structured(
+            [(5, "Revenue 100")],
+            "HY2026",
+            client=client,
+            expected_count=2,
+            sleep=_no_sleep,
+        )
+    )
+
+    assert result.trace["status"] == "partial"
+    assert "1 partidas fundamentadas de 2 esperadas" in result.trace["warning"]
+
+
+async def _no_sleep(_seconds):
+    return None
