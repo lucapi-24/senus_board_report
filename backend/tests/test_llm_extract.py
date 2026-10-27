@@ -157,7 +157,7 @@ def test_ground_items_rejects_value_only_matching_the_other_column():
 
     assert grounded == []
     assert ungrounded == [line]
-    assert line.meta["grounding_failure"] == "label_value_column_not_found"
+    assert line.meta["grounding_failure"] == "value_only_in_other_column"
 
 
 @pytest.mark.parametrize(
@@ -216,6 +216,36 @@ def test_ground_items_does_not_join_label_to_unrelated_continuation_text():
 
     assert grounded == []
     assert ungrounded == [line]
+
+
+@pytest.mark.parametrize(
+    ("statement", "label", "value", "page_text"),
+    [
+        (
+            "balance_sheet",
+            "Contingent consideration",
+            -850000,
+            "Consolidated Balance Sheet\nContingent consideration -850,000",
+        ),
+        (
+            "cash_flow",
+            "Capex",
+            -8500,
+            "Consolidated cash flow statement\n"
+            "Payments to acquire (in)tangible assets -8,500 0",
+        ),
+    ],
+)
+def test_ground_items_reports_values_only_in_the_other_column(
+    statement, label, value, page_text
+):
+    line = StatementLine(statement, label, value, 6, column=1)
+
+    grounded, ungrounded = ground_items([(6, page_text)], [line])
+
+    assert grounded == []
+    assert ungrounded == [line]
+    assert line.meta["grounding_failure"] == "value_only_in_other_column"
 
 
 def test_ground_items_accepts_target_column_without_parser_values():

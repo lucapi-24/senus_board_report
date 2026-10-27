@@ -261,6 +261,10 @@ GROUNDING_LABEL_ALIASES = {
     "Equity": ("Equity attributable to owners of the company",),
     "Cash at start": ("Cash and cash equivalent at beginning of period",),
     "Cash at end": ("Cash and cash equivalent at end of period",),
+    "Capex": (
+        "Payments to acquire (in)tangible assets",
+        "Payments to acquire intangible assets",
+    ),
 }
 
 
@@ -412,6 +416,17 @@ def ground_items(
                 for candidate in _value_candidates(line.value)
             ):
                 reason = "label_value_column_not_found"
+            if line.column in (0, 1):
+                other_column_line = StatementLine(
+                    statement=line.statement,
+                    line_item=line.line_item,
+                    value=line.value,
+                    page=line.page,
+                    source_text=line.source_text,
+                    column=1 - line.column,
+                )
+                if _statement_pages_for_line(pages, other_column_line):
+                    reason = "value_only_in_other_column"
             line.meta["grounding_failure"] = reason
         else:
             resolved_page = None
