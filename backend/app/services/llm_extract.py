@@ -246,6 +246,36 @@ def _has_any_statement_heading(text: str) -> bool:
     return any(_has_statement_heading(statement, text) for statement in STATEMENTS)
 
 
+NUMBER_TOKEN_RE = re.compile(r"(?<![\w])(?:\(?-?\d[\d,]*(?:\.\d+)?\)?)(?![\w])")
+UNLABELLED_TOTAL_ANCHORS = {
+    "Total Fixed Assets": "Tangible Assets",
+    "Total Current Assets": "Cash and cash equivalents",
+}
+GROUNDING_LABEL_ALIASES = {
+    "Group operating loss": ("Operating loss",),
+    "Revenue": ("Turnover",),
+    "Loss for the period": ("Loss for the 6 month period",),
+    "Net cash from operations": ("Net Cash used in operating activities",),
+    "Net cash from investing": ("Net Cash used in investment activities",),
+    "Net cash from financing": ("Net Cash inflow from financing activities",),
+    "Equity": ("Equity attributable to owners of the company",),
+    "Cash at start": ("Cash and cash equivalent at beginning of period",),
+    "Cash at end": ("Cash and cash equivalent at end of period",),
+}
+
+
+def _column_value_matches(text: str, label_end: int, value: float, column: int) -> bool:
+    tokens = [
+        parse_value(match.group(0))
+        for match in NUMBER_TOKEN_RE.finditer(text[label_end:])
+    ]
+    tokens = [token for token in tokens if token is not None]
+    return (
+        len(tokens) > column
+        and abs(float(tokens[column])) == abs(value)
+    )
+
+
 def _statement_pages_for_line(
     pages: Sequence[Tuple[int, str]], line: StatementLine
 ) -> List[int]:
@@ -262,113 +292,106 @@ def _statement_pages_for_line(
     }
     active_statement: Optional[str] = None
     matching_pages = set()
-    normalized_label = " ".join(line.line_item.casefold().split())
-    value_candidates = _value_candidates(line.value)
-    for page, text in pages:
-        for text_line in text.splitlines():
+    labels = (
+        line.line_item,
+        *GROUNDING_LABEL_ALIASES.get(line.line_item, ()),
+    )
+    normalized_labels = [
+        " ".join(label.casefold().split())
+        for label in labels
+    ]
+    column = line.column or 0
+    has_statement_headings = any(_has_any_statement_heading(text) for _, text in pages)
+    for page, page_content in pages:
+        page_lines = page_content.splitlines()
+        for index, text_line in enumerate(page_lines):
             for statement, pattern in heading_patterns.items():
                 if pattern.search(text_line):
                     active_statement = statement
                     break
             normalized_line = " ".join(text_line.casefold().split())
-            if (
-                active_statement == line.statement
-                and normalized_label in normalized_line
-                and any(candidate in text_line for candidate in value_candidates)
-            ):
-                matching_pages.add(page)
+            if active_statement not in (None, line.statement):
+                continue
+            if active_statement is None and has_statement_headings:
+                continue
+
+            label_match = next(
+                (
+                    match
+                    for label in normalized_labels
+                    if (match := re.search(re.escape(label), normalized_line))
+                ),
+                None,
+            )
+            if label_match:
+                row_after_label = normalized_line[label_match.end() :]
+                if _column_value_matches(row_after_label, 0, line.value, column):
+                    matching_pages.add(page)
+                    continue
+                if not NUMBER_TOKEN_RE.search(row_after_label):
+                    for continuation in page_lines[index + 1 : index + 3]:
+                        if re.fullmatch(r"[\s€£$(),.\-+\d]+", continuation) and (
+                            _column_value_matches(continuation, 0, line.value, column)
+                        ):
+                            matching_pages.add(page)
+                            break
+                    if page in matching_pages:
+                        continue
+
+            anchor = UNLABELLED_TOTAL_ANCHORS.get(line.line_item)
+            if not anchor:
+                continue
+            anchor_match = re.search(
+                re.escape(" ".join(anchor.casefold().split())), normalized_line
+            )
+            if anchor_match is None:
+                continue
+            for total_line in page_lines[index + 1 : index + 3]:
+                if _column_value_matches(total_line, 0, line.value, column):
+                    matching_pages.add(page)
+                    break
     return sorted(matching_pages)
 
 
 def ground_items(
     pages: Sequence[Tuple[int, str]],
     lines: Sequence[StatementLine],
-    expected_items: Optional[Dict[str, Dict[str, Dict[str, Any]]]] = None,
-    other_column_items: Optional[Dict[str, Dict[str, float]]] = None,
-    canonicalize_label: Optional[Callable[[str, str], str]] = None,
 ) -> Tuple[List[StatementLine], List[StatementLine]]:
     """Split lines into (grounded, ungrounded) using document text and parser data.
 
-    A value is grounded when its digits — with or without thousands separators —
-    appear in the text of the page it claims to come from. Sign is ignored, so
-    a value of -483753 matches "(483,753)" or "483,753".
-
-    If the model claims the wrong page, repair it only when its value matches the
-    parser's exact value for that label and column. When duplicated labels make
-    the parser page ambiguous, a matching row under the requested statement's
-    heading takes precedence.
+    A value is grounded only when its label and the figure in the requested
+    numeric column appear together in document text. The model's page is only a
+    hint: a unique textual match determines the page.
     """
-    page_text = {num: text for num, text in pages}
-    expected_items = expected_items or {}
-    other_column_items = other_column_items or {}
     grounded: List[StatementLine] = []
     ungrounded: List[StatementLine] = []
     for line in lines:
-        label = (
-            canonicalize_label(line.statement, line.line_item)
-            if canonicalize_label
-            else line.line_item
-        )
-        expected = expected_items.get(line.statement, {}).get(label)
-        other_column_value = other_column_items.get(line.statement, {}).get(label)
-        matches_expected = False
-        if expected:
-            try:
-                matches_expected = abs(float(expected["value"])) == abs(line.value)
-            except (KeyError, TypeError, ValueError):
-                matches_expected = False
-        if (
-            other_column_value is not None
-            and abs(float(other_column_value)) == abs(line.value)
-            and not matches_expected
-        ):
-            line.meta["grounding_failure"] = "wrong_comparative_column"
-            line.grounded = False
-            ungrounded.append(line)
-            continue
-
-        text = page_text.get(line.page, "")
-        ok = bool(text) and any(cand in text for cand in _value_candidates(line.value))
-        if not ok:
-            if expected:
-                try:
-                    expected_value = float(expected["value"])
-                    expected_page = int(expected["page"])
-                except (KeyError, TypeError, ValueError):
-                    expected_value = None
-                    expected_page = 0
-                expected_text = page_text.get(expected_page, "")
-                normalized_label = " ".join(line.line_item.casefold().split())
-                label_present = bool(expected_text) and normalized_label in " ".join(
-                    expected_text.casefold().split()
+        statement_pages = _statement_pages_for_line(pages, line)
+        if line.page in statement_pages:
+            resolved_page = line.page
+        elif len(statement_pages) == 1:
+            resolved_page = statement_pages[0]
+        elif not statement_pages:
+            resolved_page = None
+            claimed_text = next((text for page, text in pages if page == line.page), "")
+            reason = (
+                "label_value_column_not_found"
+                if any(
+                    candidate in claimed_text
+                    for candidate in _value_candidates(line.value)
                 )
-                same_value = (
-                    expected_value is not None
-                    and abs(expected_value) == abs(line.value)
-                )
-                present_on_expected_page = bool(expected_text) and any(
-                    candidate in expected_text for candidate in _value_candidates(line.value)
-                )
-                if same_value and label_present and present_on_expected_page:
-                    corrected_page = expected_page
-                    statement_pages = _statement_pages_for_line(pages, line)
-                    can_recover = expected_page in statement_pages
-                    if not can_recover and len(statement_pages) == 1:
-                        corrected_page = statement_pages[0]
-                        can_recover = True
-                    elif not can_recover and len(statement_pages) > 1:
-                        line.meta["grounding_failure"] = "ambiguous_statement_page"
-                    elif not can_recover and not _has_any_statement_heading(expected_text):
-                        can_recover = True
-                    elif not can_recover:
-                        line.meta["grounding_failure"] = "parser_page_conflicts_with_statement"
-                    if can_recover:
-                        line.meta["claimed_page"] = line.page
-                        line.meta["page_recovered"] = True
-                        line.meta["grounding_source"] = "parser_value_and_page"
-                        line.page = corrected_page
-                        text = page_text.get(corrected_page, "")
-                        ok = True
+                else "value_not_found_on_claimed_page"
+            )
+            line.meta["grounding_failure"] = reason
+        else:
+            resolved_page = None
+            line.meta["grounding_failure"] = "ambiguous_text_match"
+        ok = resolved_page is not None
+        if ok and resolved_page != line.page:
+            line.meta["claimed_page"] = line.page
+            line.meta["page_recovered"] = True
+            line.meta["grounding_source"] = "label_value_column_text"
+            line.page = resolved_page
         line.grounded = ok
         (grounded if ok else ungrounded).append(line)
     return grounded, ungrounded
@@ -551,9 +574,6 @@ async def extract_structured(
     sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
     reserve_budget: Callable[..., Awaitable[float]] = reserve_token_budget,
     document_id: Optional[int] = None,
-    expected_items: Optional[Dict[str, Dict[str, Dict[str, Any]]]] = None,
-    other_column_items: Optional[Dict[str, Dict[str, float]]] = None,
-    canonicalize_label: Optional[Callable[[str, str], str]] = None,
 ) -> LLMExtractionResult:
     """Ask the model for the statements and return the grounded lines.
 
@@ -783,13 +803,7 @@ async def extract_structured(
         data,
         expected_column=column,
     )
-    grounded, ungrounded = ground_items(
-        pages,
-        normalized,
-        expected_items=expected_items,
-        other_column_items=other_column_items,
-        canonicalize_label=canonicalize_label,
-    )
+    grounded, ungrounded = ground_items(pages, normalized)
     ground_discarded = [
         {
             "statement": line.statement,

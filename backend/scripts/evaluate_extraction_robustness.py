@@ -114,6 +114,10 @@ async def evaluate(
         "regex_has_original_label": any(label.casefold() == key.casefold() for key in regex_labels),
         "regex_labels": regex_labels,
         "llm_item_count": len(llm_result.lines),
+        "llm_items_by_statement": {
+            statement: sum(line.statement == statement for line in llm_result.lines)
+            for statement in ("pnl", "balance_sheet", "cash_flow")
+        },
         "llm_replacement_label_matches": llm_label_matches,
         "llm_only_items": llm_only,
         "selected_pages": [number for number, _text in selected_pages],
