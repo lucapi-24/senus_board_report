@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from datetime import date
 from typing import Any, Dict, List, Sequence, Tuple
 
 from app.services.llm_extract import parse_value
@@ -17,10 +18,19 @@ def find_note_mismatches(
     statement_pages: set[int],
     deterministic: Dict[str, Any],
     tolerance: float = 1.0,
+    period_end: date | None = None,
 ) -> List[Dict[str, Any]]:
     """Report note values that disagree with the parsed statement value."""
     warnings: List[Dict[str, Any]] = []
     last_statement_page = max(statement_pages, default=0)
+    period_date = (
+        re.compile(
+            rf"\b0?{period_end.day}\s+{period_end.strftime('%B')}\s+{period_end.year}\b",
+            re.IGNORECASE,
+        )
+        if period_end
+        else None
+    )
     note_pages: List[Tuple[int, str]] = []
     in_notes = False
     for page_number, text in pages:
@@ -32,7 +42,9 @@ def find_note_mismatches(
             continue
         if any(NOTE_HEADING_RE.search(line) for line in lines):
             in_notes = True
-        if in_notes:
+        if in_notes and (
+            period_date is None or period_date.search(text)
+        ):
             note_pages.append((page_number, text))
 
     for statement in ("pnl", "balance_sheet", "cash_flow"):

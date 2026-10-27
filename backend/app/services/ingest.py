@@ -472,6 +472,7 @@ async def ingest_document(
             pages,
             statement_pages,
             tables,
+            period_end=use_end,
         )
         proposal["subtotal_warnings"] = subtotal_warnings
         await _persist(

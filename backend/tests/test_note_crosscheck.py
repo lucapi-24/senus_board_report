@@ -1,3 +1,5 @@
+from datetime import date
+
 from app.services.note_crosscheck import find_note_mismatches
 
 
@@ -44,3 +46,33 @@ def test_highlight_rounding_and_narrative_pages_are_not_note_mismatches():
         )
         == []
     )
+
+
+def test_note_mismatch_is_limited_to_the_period_named_in_the_note():
+    pages = [
+        (5, "Goodwill 669,550"),
+        (
+            8,
+            "4. Acquisition\n"
+            "The statements for the period ended 31 December 2025 include "
+            "Goodwill of €669,500.",
+        ),
+    ]
+    tables = {"balance_sheet": {"Goodwill": "669550"}}
+
+    current_period = find_note_mismatches(
+        pages,
+        {5},
+        tables,
+        period_end=date(2025, 12, 31),
+    )
+    comparative_period = find_note_mismatches(
+        pages,
+        {5},
+        tables,
+        period_end=date(2024, 12, 31),
+    )
+
+    assert len(current_period) == 1
+    assert current_period[0]["note_value"] == 669500.0
+    assert comparative_period == []
