@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   ResponsiveContainer,
   BarChart,
@@ -23,6 +23,7 @@ import {
   Activity,
   Sparkles,
   RefreshCw,
+  ChevronDown,
 } from 'lucide-react'
 import {
   api,
@@ -119,6 +120,71 @@ function RatioPanel({ title, hint, items }: { title: string; hint?: string; item
   )
 }
 
+function PeriodPicker({
+  options,
+  onPick,
+}: {
+  options: FinancialSummary[]
+  onPick: (label: string) => void
+}) {
+  const [open, setOpen] = useState(false)
+  const ref = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!open) return
+    const close = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
+    }
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setOpen(false)
+    }
+    document.addEventListener('mousedown', close)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('mousedown', close)
+      document.removeEventListener('keydown', onKey)
+    }
+  }, [open])
+
+  return (
+    <div className="picker" ref={ref}>
+      <button
+        type="button"
+        className="picker__trigger"
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        aria-labelledby="compare-add-label"
+        disabled={!options.length}
+        onClick={() => setOpen((v) => !v)}
+      >
+        {options.length ? 'Select a period to add' : 'All periods added'}
+        <ChevronDown size={16} className={open ? 'is-open' : ''} />
+      </button>
+      {open && (
+        <ul className="picker__menu" role="listbox">
+          {options.map((s) => (
+            <li key={s.period.label} role="option" aria-selected="false">
+              <button
+                type="button"
+                className="picker__option"
+                onClick={() => {
+                  onPick(s.period.label)
+                  setOpen(false)
+                }}
+              >
+                <span className="picker__label">{s.period.label}</span>
+                <span className="picker__meta">
+                  {s.period.start_date} → {s.period.end_date} · {s.duration_months} months
+                </span>
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  )
+}
+
 interface DashboardProps {
   summary: FinancialSummary[]
   selected: string
@@ -131,9 +197,9 @@ export function Dashboard({ summary, selected }: DashboardProps) {
   const [sourceDocumentError] = useState('')
   const [compareLabels, setCompareLabels] = useState<string[]>([])
 
-  // Temporary preview: add ?mock=1 to the URL to append a synthetic period.
+  // Temporary preview: a synthetic period is appended to test comparisons with more periods.
   const comparablePeriods = useMemo(() => {
-    if (!new URLSearchParams(window.location.search).has('mock') || !summary.length) return summary
+    if (!summary.length) return summary
     const base = [...summary].sort((x, y) => x.period.end_date.localeCompare(y.period.end_date)).at(-1)!
     const shiftYear = (date: string) => `${Number(date.slice(0, 4)) + 1}${date.slice(4)}`
     const scale = (v: number | null, f: number) => (v == null ? null : v * f)
@@ -936,25 +1002,11 @@ export function Dashboard({ summary, selected }: DashboardProps) {
 
           <div className="compare__form">
             <div className="compare__select">
-              <label htmlFor="compare-add">Add period</label>
-              <select
-                id="compare-add"
-                value=""
-                disabled={!availableToAdd.length}
-                onChange={(e) => {
-                  const label = e.target.value
-                  if (label) setCompareLabels((prev) => [...prev, label])
-                }}
-              >
-                <option value="">
-                  {availableToAdd.length ? 'Select a period to add' : 'All periods added'}
-                </option>
-                {availableToAdd.map((s) => (
-                  <option key={s.period.label} value={s.period.label}>
-                    {s.period.label} ({s.period.start_date} to {s.period.end_date})
-                  </option>
-                ))}
-              </select>
+              <label id="compare-add-label">Add period</label>
+              <PeriodPicker
+                options={availableToAdd}
+                onPick={(label) => setCompareLabels((prev) => [...prev, label])}
+              />
             </div>
             {comparablePeriods.length > 2 && (
               <button
