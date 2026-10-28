@@ -1892,6 +1892,10 @@
   border-color: var(--senus-peach);
 }
 
+.compare__trends {
+  margin-top: 1.5rem;
+}
+
 .compare__table {
   width: 100%;
   border-collapse: collapse;

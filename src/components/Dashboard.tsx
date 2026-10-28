@@ -445,34 +445,8 @@ export function Dashboard({ summary, selected }: DashboardProps) {
           />
         </section>
 
-        {/* Charts row 1 */}
+        {/* Cost structure and cash bridge */}
         <section className="grid-2">
-          <div className="panel">
-            <div className="panel__head">
-              <h2>Revenue, Gross Profit &amp; Operating Loss</h2>
-              <span className="panel__hint">
-                Reported amounts · same-duration periods only
-              </span>
-            </div>
-            <ResponsiveContainer width="100%" height={300}>
-              <BarChart data={compareData} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#eceeed" vertical={false} />
-                <XAxis dataKey="name" tick={{ fill: '#6b7370', fontSize: 13 }} axisLine={false} tickLine={false} />
-                <YAxis
-                  tick={{ fill: '#6b7370', fontSize: 12 }}
-                  axisLine={false}
-                  tickLine={false}
-                  tickFormatter={(v) => formatCompactEur(v)}
-                />
-                <Tooltip formatter={(v) => formatCompactEur(Number(v))} />
-                <Legend />
-                <Bar dataKey="Revenue" fill="#20948B" radius={[6, 6, 0, 0]} />
-                <Bar dataKey="Gross Profit" fill="#023C28" radius={[6, 6, 0, 0]} />
-                <Bar dataKey="Operating Loss" fill="#FFBC7D" radius={[6, 6, 0, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-
           <div className="panel">
             <div className="panel__head">
               <h2>Cost Breakdown</h2>
@@ -500,32 +474,6 @@ export function Dashboard({ summary, selected }: DashboardProps) {
             ) : (
               <div className="panel__empty">No cost data for this period.</div>
             )}
-          </div>
-        </section>
-
-        {/* Charts row 2 */}
-        <section className="grid-2">
-          <div className="panel">
-            <div className="panel__head">
-              <h2>Margin Trend</h2>
-              <span className="panel__hint">Derived percentages · same-duration periods only</span>
-            </div>
-            <ResponsiveContainer width="100%" height={280}>
-              <LineChart data={marginData} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#eceeed" vertical={false} />
-                <XAxis dataKey="name" tick={{ fill: '#6b7370', fontSize: 13 }} axisLine={false} tickLine={false} />
-                <YAxis
-                  tick={{ fill: '#6b7370', fontSize: 12 }}
-                  axisLine={false}
-                  tickLine={false}
-                  tickFormatter={(v) => `${v}%`}
-                />
-                <Tooltip formatter={(v) => formatPct(Number(v))} />
-                <Legend />
-                <Line type="monotone" dataKey="Gross Margin" stroke="#20948B" strokeWidth={3} dot={{ r: 5 }} />
-                <Line type="monotone" dataKey="Operating Margin" stroke="#FFBC7D" strokeWidth={3} dot={{ r: 5 }} />
-              </LineChart>
-            </ResponsiveContainer>
           </div>
 
           <div className="panel">
@@ -760,16 +708,6 @@ export function Dashboard({ summary, selected }: DashboardProps) {
             hint={current?.period.label}
             items={[
               {
-                label: 'Revenue growth YoY',
-                value: yoy ? formatPct(yoy.pct) : 'n/d',
-                origin: yoy ? 'derived' : 'n/d',
-                formula: 'Same-duration revenue vs the period starting 12 months earlier',
-                tone: yoy ? (yoy.pct >= 0 ? 'pos' : 'neg') : undefined,
-                note: yoy
-                  ? `${current?.period.label} vs ${yoy.label} — same-length period one year earlier.`
-                  : 'No prior-year comparable of the same length is loaded for this period.',
-              },
-              {
                 label: 'Senus 2030 target CAGR',
                 value: '50.0%',
                 origin: 'reported',
@@ -782,19 +720,6 @@ export function Dashboard({ summary, selected }: DashboardProps) {
                 note: fyRevenue !== null
                   ? `From FY2025 revenue of ${formatCompactEur(fyRevenue)} to stay on a 50% CAGR track.`
                   : 'FY2025 revenue is not available.',
-              },
-              {
-                label: 'FY2025 seasonality (H1 / H2)',
-                value: seasonality
-                  ? `${seasonality.h1pct.toFixed(0)}% / ${seasonality.h2pct.toFixed(0)}%`
-                  : 'n/d',
-                origin: seasonality ? 'derived' : 'n/d',
-                formula: 'H1 and residual H2 revenue as a share of full-year revenue',
-                note: seasonality
-                  ? `H1 ${formatCompactEur(seasonality.h1)} vs implied H2 ${formatCompactEur(
-                      seasonality.h2,
-                    )}.`
-                  : undefined,
               },
               {
                 label: 'Revenue growth month over month',
@@ -844,10 +769,6 @@ export function Dashboard({ summary, selected }: DashboardProps) {
                   {multOrDash(metricValue('current_ratio_ex_contingent'))}.
                 </li>
               )}
-              <li>
-                <strong>Short history.</strong> Only three periods are available, so trend and
-                seasonality views are indicative rather than statistically robust.
-              </li>
             </ul>
           </div>
         </section>
@@ -1064,6 +985,100 @@ export function Dashboard({ summary, selected }: DashboardProps) {
           ) : (
             <div className="panel__empty">Select two different periods to compare them.</div>
           )}
+
+          <div className="grid-2 compare__trends">
+            <div className="panel">
+              <div className="panel__head">
+                <h2>Revenue, Gross Profit &amp; Operating Loss</h2>
+                <span className="panel__hint">
+                  Reported amounts · same-duration periods only
+                </span>
+              </div>
+              <ResponsiveContainer width="100%" height={300}>
+                <BarChart data={compareData} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#eceeed" vertical={false} />
+                  <XAxis dataKey="name" tick={{ fill: '#6b7370', fontSize: 13 }} axisLine={false} tickLine={false} />
+                  <YAxis
+                    tick={{ fill: '#6b7370', fontSize: 12 }}
+                    axisLine={false}
+                    tickLine={false}
+                    tickFormatter={(v) => formatCompactEur(v)}
+                  />
+                  <Tooltip formatter={(v) => formatCompactEur(Number(v))} />
+                  <Legend />
+                  <Bar dataKey="Revenue" fill="#20948B" radius={[6, 6, 0, 0]} />
+                  <Bar dataKey="Gross Profit" fill="#023C28" radius={[6, 6, 0, 0]} />
+                  <Bar dataKey="Operating Loss" fill="#FFBC7D" radius={[6, 6, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+
+            <div className="panel">
+              <div className="panel__head">
+                <h2>Margin Trend</h2>
+                <span className="panel__hint">Derived percentages · same-duration periods only</span>
+              </div>
+              <ResponsiveContainer width="100%" height={300}>
+                <LineChart data={marginData} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#eceeed" vertical={false} />
+                  <XAxis dataKey="name" tick={{ fill: '#6b7370', fontSize: 13 }} axisLine={false} tickLine={false} />
+                  <YAxis
+                    tick={{ fill: '#6b7370', fontSize: 12 }}
+                    axisLine={false}
+                    tickLine={false}
+                    tickFormatter={(v) => `${v}%`}
+                  />
+                  <Tooltip formatter={(v) => formatPct(Number(v))} />
+                  <Legend />
+                  <Line type="monotone" dataKey="Gross Margin" stroke="#20948B" strokeWidth={3} dot={{ r: 5 }} />
+                  <Line type="monotone" dataKey="Operating Margin" stroke="#FFBC7D" strokeWidth={3} dot={{ r: 5 }} />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+
+          <div className="grid-2 compare__trends">
+            <RatioPanel
+              title="Growth over time"
+              hint={`${current?.period.label} selected`}
+              items={[
+                {
+                  label: 'Revenue growth YoY',
+                  value: yoy ? formatPct(yoy.pct) : 'n/d',
+                  origin: yoy ? 'derived' : 'n/d',
+                  formula: 'Same-duration revenue vs the period starting 12 months earlier',
+                  tone: yoy ? (yoy.pct >= 0 ? 'pos' : 'neg') : undefined,
+                  note: yoy
+                    ? `${current?.period.label} vs ${yoy.label} — same-length period one year earlier.`
+                    : 'No prior-year comparable of the same length is loaded for this period.',
+                },
+                {
+                  label: 'FY2025 seasonality (H1 / H2)',
+                  value: seasonality
+                    ? `${seasonality.h1pct.toFixed(0)}% / ${seasonality.h2pct.toFixed(0)}%`
+                    : 'n/d',
+                  origin: seasonality ? 'derived' : 'n/d',
+                  formula: 'H1 and residual H2 revenue as a share of full-year revenue',
+                  note: seasonality
+                    ? `H1 ${formatCompactEur(seasonality.h1)} vs implied H2 ${formatCompactEur(
+                        seasonality.h2,
+                      )}.`
+                    : undefined,
+                },
+              ]}
+            />
+            <div className="panel">
+              <div className="panel__head">
+                <h2>How to read this comparison</h2>
+              </div>
+              <ul className="notes">
+                <li>
+                  <strong>Short history.</strong> Only three periods are available, so trend and
+                  seasonality views are indicative rather than statistically robust.
+                </li>
+              </ul>
+            </div>
+          </div>
         </section>
       </div>
     </div>
