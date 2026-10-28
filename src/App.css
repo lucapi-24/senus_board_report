@@ -1892,6 +1892,31 @@
   border-color: var(--senus-peach);
 }
 
+.compare__periods {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1.5rem;
+  border: 0;
+  padding: 0;
+  margin: 0;
+}
+
+.compare__periods legend {
+  font-size: 0.813rem;
+  font-weight: 600;
+  color: var(--senus-text-muted);
+  margin-bottom: 0.5rem;
+  padding: 0;
+}
+
+.compare__check {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.875rem;
+  cursor: pointer;
+}
+
 .compare__trends {
   margin-top: 1.5rem;
 }

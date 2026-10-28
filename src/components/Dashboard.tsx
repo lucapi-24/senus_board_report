@@ -129,22 +129,29 @@ export function Dashboard({ summary, selected }: DashboardProps) {
   const [insights, setInsights] = useState<AIInsight[]>([])
   const [insightsLoading, setInsightsLoading] = useState(Boolean(selected))
   const [sourceDocumentError] = useState('')
-  const [compareSelection, setCompareSelection] = useState<{
-    label_a: string | null
-    label_b: string | null
-  }>({ label_a: null, label_b: null })
+  const [compareLabels, setCompareLabels] = useState<string[]>([])
 
-  const periodA = summary.find((s) => s.period.label === compareSelection.label_a)
-  const periodB = summary.find((s) => s.period.label === compareSelection.label_b)
-  const compareRows: { label: string; kind: 'eur' | 'pct'; a: number | null; b: number | null }[] = [
-    { label: 'Revenue', kind: 'eur', a: toNumber(periodA?.revenue), b: toNumber(periodB?.revenue) },
-    { label: 'Gross profit', kind: 'eur', a: toNumber(periodA?.gross_profit), b: toNumber(periodB?.gross_profit) },
-    { label: 'Operating loss', kind: 'eur', a: toNumber(periodA?.operating_loss), b: toNumber(periodB?.operating_loss) },
-    { label: 'Gross margin', kind: 'pct', a: periodA?.gross_margin ?? null, b: periodB?.gross_margin ?? null },
-    { label: 'Operating margin', kind: 'pct', a: periodA?.operating_margin ?? null, b: periodB?.operating_margin ?? null },
-    { label: 'Cash', kind: 'eur', a: toNumber(periodA?.cash), b: toNumber(periodB?.cash) },
-    { label: 'Debt', kind: 'eur', a: toNumber(periodA?.debt), b: toNumber(periodB?.debt) },
+  const comparedPeriods = summary
+    .filter((s) => compareLabels.includes(s.period.label))
+    .sort((x, y) => x.period.start_date.localeCompare(y.period.start_date))
+  const comparing = comparedPeriods.length >= 2
+  const firstPeriod = comparedPeriods[0]
+  const lastPeriod = comparedPeriods[comparedPeriods.length - 1]
+  const compareMetrics: {
+    label: string
+    kind: 'eur' | 'pct'
+    get: (s: FinancialSummary) => number | null
+  }[] = [
+    { label: 'Revenue', kind: 'eur', get: (s) => toNumber(s.revenue) },
+    { label: 'Gross profit', kind: 'eur', get: (s) => toNumber(s.gross_profit) },
+    { label: 'Operating loss', kind: 'eur', get: (s) => toNumber(s.operating_loss) },
+    { label: 'Gross margin', kind: 'pct', get: (s) => s.gross_margin ?? null },
+    { label: 'Operating margin', kind: 'pct', get: (s) => s.operating_margin ?? null },
+    { label: 'Cash', kind: 'eur', get: (s) => toNumber(s.cash) },
+    { label: 'Debt', kind: 'eur', get: (s) => toNumber(s.debt) },
   ]
+  const mixedDurations =
+    new Set(comparedPeriods.map((s) => s.duration_months)).size > 1
 
   useEffect(() => {
     if (!selected) return
@@ -199,18 +206,14 @@ export function Dashboard({ summary, selected }: DashboardProps) {
   const revenue = toNumber(current?.revenue)
   const operatingLoss = toNumber(current?.operating_loss)
   const operatingMargin = current?.operating_margin ?? null
-  const comparableSummary = current
-    ? summary.filter((period) => period.duration_months === current.duration_months)
-    : []
-
-  const compareData = comparableSummary.map((s) => ({
+  const compareData = comparedPeriods.map((s) => ({
     name: s.period.label,
     Revenue: toNumber(s.revenue),
     'Gross Profit': toNumber(s.gross_profit),
     'Operating Loss': toNumber(s.operating_loss),
   }))
 
-  const marginData = comparableSummary.map((s) => ({
+  const marginData = comparedPeriods.map((s) => ({
     name: s.period.label,
     'Gross Margin': s.gross_margin,
     'Operating Margin': s.operating_margin,
@@ -899,73 +902,67 @@ export function Dashboard({ summary, selected }: DashboardProps) {
         <section className="panel comparison">
           <div className="panel__head">
             <h2>Compare periods</h2>
-            <span className="panel__hint">Calculated from reported figures · B minus A</span>
+            <span className="panel__hint">Calculated from reported figures · change = latest vs earliest selected</span>
           </div>
 
           <div className="compare__form">
-            <div className="compare__select">
-              <label>Period A</label>
-              <select
-                value={compareSelection.label_a ?? ''}
-                onChange={(e) => setCompareSelection((prev) => ({ ...prev, label_a: e.target.value }))}
-              >
-                <option value="">Select period</option>
-                {summary.map((s) => (
-                  <option key={s.period.label} value={s.period.label}>
-                    {s.period.label} ({s.period.start_date} to {s.period.end_date})
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div className="compare__select">
-              <label>Period B</label>
-              <select
-                value={compareSelection.label_b ?? ''}
-                onChange={(e) => setCompareSelection((prev) => ({ ...prev, label_b: e.target.value }))}
-              >
-                <option value="">Select period</option>
-                {summary.map((s) => (
-                  <option key={s.period.label} value={s.period.label}>
-                    {s.period.label} ({s.period.start_date} to {s.period.end_date})
-                  </option>
-                ))}
-              </select>
-            </div>
+            <fieldset className="compare__periods">
+              <legend>Select two or more periods to compare</legend>
+              {summary.map((s) => (
+                <label key={s.period.label} className="compare__check">
+                  <input
+                    type="checkbox"
+                    checked={compareLabels.includes(s.period.label)}
+                    onChange={(e) =>
+                      setCompareLabels((prev) =>
+                        e.target.checked
+                          ? [...prev, s.period.label]
+                          : prev.filter((label) => label !== s.period.label),
+                      )
+                    }
+                  />
+                  {s.period.label} ({s.period.start_date} to {s.period.end_date})
+                </label>
+              ))}
+            </fieldset>
           </div>
 
-          {periodA && periodB && periodA !== periodB ? (
+          {comparing && (
             <>
-              {periodA.duration_months !== periodB.duration_months && (
+              {mixedDurations && (
                 <p className="provenance__note">
-                  These periods have different lengths ({periodA.duration_months} and{' '}
-                  {periodB.duration_months} months), so absolute differences are not like-for-like.
+                  The selected periods have different lengths, so absolute differences are not
+                  like-for-like.
                 </p>
               )}
               <table className="compare__table">
                 <thead>
                   <tr>
                     <th>Metric</th>
-                    <th>{periodA.period.label}</th>
-                    <th>{periodB.period.label}</th>
+                    {comparedPeriods.map((s) => (
+                      <th key={s.period.label}>{s.period.label}</th>
+                    ))}
                     <th>Change</th>
                     <th>Change %</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {compareRows.map((row) => {
-                    const diff =
-                      row.a != null && row.b != null ? row.b - row.a : null
+                  {compareMetrics.map((row) => {
+                    const first = row.get(firstPeriod)
+                    const last = row.get(lastPeriod)
+                    const diff = first != null && last != null ? last - first : null
                     const pct =
-                      row.kind === 'eur' && diff !== null && row.a !== 0
-                        ? (diff / Math.abs(row.a as number)) * 100
+                      row.kind === 'eur' && diff !== null && first !== 0
+                        ? (diff / Math.abs(first as number)) * 100
                         : null
                     const show = (v: number | null) =>
                       v === null ? 'n/d' : row.kind === 'eur' ? formatCompactEur(v) : formatPct(v)
                     return (
                       <tr key={row.label}>
                         <td>{row.label}</td>
-                        <td>{show(row.a)}</td>
-                        <td>{show(row.b)}</td>
+                        {comparedPeriods.map((s) => (
+                          <td key={s.period.label}>{show(row.get(s))}</td>
+                        ))}
                         <td className={diff === null ? '' : diff < 0 ? 'is-neg' : 'is-pos'}>
                           {diff === null
                             ? 'n/d'
@@ -981,18 +978,12 @@ export function Dashboard({ summary, selected }: DashboardProps) {
                   })}
                 </tbody>
               </table>
-            </>
-          ) : (
-            <div className="panel__empty">Select two different periods to compare them.</div>
-          )}
 
           <div className="grid-2 compare__trends">
             <div className="panel">
               <div className="panel__head">
                 <h2>Revenue, Gross Profit &amp; Operating Loss</h2>
-                <span className="panel__hint">
-                  Reported amounts · same-duration periods only
-                </span>
+                <span className="panel__hint">Reported amounts · selected periods</span>
               </div>
               <ResponsiveContainer width="100%" height={300}>
                 <BarChart data={compareData} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
@@ -1016,7 +1007,7 @@ export function Dashboard({ summary, selected }: DashboardProps) {
             <div className="panel">
               <div className="panel__head">
                 <h2>Margin Trend</h2>
-                <span className="panel__hint">Derived percentages · same-duration periods only</span>
+                <span className="panel__hint">Derived percentages · selected periods</span>
               </div>
               <ResponsiveContainer width="100%" height={300}>
                 <LineChart data={marginData} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
@@ -1079,6 +1070,8 @@ export function Dashboard({ summary, selected }: DashboardProps) {
               </ul>
             </div>
           </div>
+            </>
+          )}
         </section>
       </div>
     </div>
