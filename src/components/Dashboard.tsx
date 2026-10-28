@@ -1,18 +1,11 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import {
   ResponsiveContainer,
-  BarChart,
-  Bar,
-  XAxis,
-  YAxis,
-  CartesianGrid,
   Tooltip,
   Legend,
   PieChart,
   Pie,
   Cell,
-  LineChart,
-  Line,
 } from 'recharts'
 import {
   Euro,
@@ -23,8 +16,8 @@ import {
   Activity,
   Sparkles,
   RefreshCw,
-  ChevronDown,
 } from 'lucide-react'
+import { PeriodComparison } from './PeriodComparison'
 import {
   api,
   type FinancialSummary,
@@ -120,71 +113,6 @@ function RatioPanel({ title, hint, items }: { title: string; hint?: string; item
   )
 }
 
-function PeriodPicker({
-  options,
-  onPick,
-}: {
-  options: FinancialSummary[]
-  onPick: (label: string) => void
-}) {
-  const [open, setOpen] = useState(false)
-  const ref = useRef<HTMLDivElement>(null)
-
-  useEffect(() => {
-    if (!open) return
-    const close = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
-    }
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setOpen(false)
-    }
-    document.addEventListener('mousedown', close)
-    document.addEventListener('keydown', onKey)
-    return () => {
-      document.removeEventListener('mousedown', close)
-      document.removeEventListener('keydown', onKey)
-    }
-  }, [open])
-
-  return (
-    <div className="picker" ref={ref}>
-      <button
-        type="button"
-        className="picker__trigger"
-        aria-haspopup="listbox"
-        aria-expanded={open}
-        aria-labelledby="compare-add-label"
-        disabled={!options.length}
-        onClick={() => setOpen((v) => !v)}
-      >
-        {options.length ? 'Select a period to add' : 'All periods added'}
-        <ChevronDown size={16} className={open ? 'is-open' : ''} />
-      </button>
-      {open && (
-        <ul className="picker__menu" role="listbox">
-          {options.map((s) => (
-            <li key={s.period.label} role="option" aria-selected="false">
-              <button
-                type="button"
-                className="picker__option"
-                onClick={() => {
-                  onPick(s.period.label)
-                  setOpen(false)
-                }}
-              >
-                <span className="picker__label">{s.period.label}</span>
-                <span className="picker__meta">
-                  {s.period.start_date} → {s.period.end_date} · {s.duration_months} months
-                </span>
-              </button>
-            </li>
-          ))}
-        </ul>
-      )}
-    </div>
-  )
-}
-
 interface DashboardProps {
   summary: FinancialSummary[]
   selected: string
@@ -195,56 +123,6 @@ export function Dashboard({ summary, selected }: DashboardProps) {
   const [insights, setInsights] = useState<AIInsight[]>([])
   const [insightsLoading, setInsightsLoading] = useState(Boolean(selected))
   const [sourceDocumentError] = useState('')
-  const [compareLabels, setCompareLabels] = useState<string[]>([])
-
-  // Temporary preview: a synthetic period is appended to test comparisons with more periods.
-  const comparablePeriods = useMemo(() => {
-    if (!summary.length) return summary
-    const base = [...summary].sort((x, y) => x.period.end_date.localeCompare(y.period.end_date)).at(-1)!
-    const shiftYear = (date: string) => `${Number(date.slice(0, 4)) + 1}${date.slice(4)}`
-    const scale = (v: number | null, f: number) => (v == null ? null : v * f)
-    const mock: FinancialSummary = {
-      ...base,
-      period: {
-        ...base.period,
-        id: -1,
-        label: `${base.period.label.replace(/\d{4}$/, (y) => String(Number(y) + 1))} (mock)`,
-        start_date: shiftYear(base.period.start_date),
-        end_date: shiftYear(base.period.end_date),
-      },
-      revenue: scale(base.revenue, 1.45),
-      gross_profit: scale(base.gross_profit, 1.6),
-      operating_loss: scale(base.operating_loss, 0.6),
-      gross_margin: base.gross_margin == null ? null : base.gross_margin + 3,
-      operating_margin: base.operating_margin == null ? null : base.operating_margin + 12,
-      cash: scale(base.cash, 0.8),
-      debt: scale(base.debt, 0.9),
-      revenue_yoy_change_pct: null,
-      revenue_yoy_period_label: null,
-    }
-    return [...summary, mock]
-  }, [summary])
-
-  const comparedPeriods = comparablePeriods
-    .filter((s) => compareLabels.includes(s.period.label))
-    .sort((x, y) => x.period.start_date.localeCompare(y.period.start_date))
-  const availableToAdd = comparablePeriods.filter((s) => !compareLabels.includes(s.period.label))
-  const comparing = comparedPeriods.length >= 2
-  const compareMetrics: {
-    label: string
-    kind: 'eur' | 'pct'
-    get: (s: FinancialSummary) => number | null
-  }[] = [
-    { label: 'Revenue', kind: 'eur', get: (s) => toNumber(s.revenue) },
-    { label: 'Gross profit', kind: 'eur', get: (s) => toNumber(s.gross_profit) },
-    { label: 'Operating loss', kind: 'eur', get: (s) => toNumber(s.operating_loss) },
-    { label: 'Gross margin', kind: 'pct', get: (s) => s.gross_margin ?? null },
-    { label: 'Operating margin', kind: 'pct', get: (s) => s.operating_margin ?? null },
-    { label: 'Cash', kind: 'eur', get: (s) => toNumber(s.cash) },
-    { label: 'Debt', kind: 'eur', get: (s) => toNumber(s.debt) },
-  ]
-  const mixedDurations =
-    new Set(comparedPeriods.map((s) => s.duration_months)).size > 1
 
   useEffect(() => {
     if (!selected) return
@@ -299,18 +177,6 @@ export function Dashboard({ summary, selected }: DashboardProps) {
   const revenue = toNumber(current?.revenue)
   const operatingLoss = toNumber(current?.operating_loss)
   const operatingMargin = current?.operating_margin ?? null
-  const compareData = comparedPeriods.map((s) => ({
-    name: s.period.label,
-    Revenue: toNumber(s.revenue),
-    'Gross Profit': toNumber(s.gross_profit),
-    'Operating Loss': toNumber(s.operating_loss),
-  }))
-
-  const marginData = comparedPeriods.map((s) => ({
-    name: s.period.label,
-    'Gross Margin': s.gross_margin,
-    'Operating Margin': s.operating_margin,
-  }))
 
   const costData = useMemo(() => {
     if (!detail) return []
@@ -414,28 +280,7 @@ export function Dashboard({ summary, selected }: DashboardProps) {
         }
       : null
 
-  const seasonality = (() => {
-    for (const fy of summary) {
-      if (fy.duration_months < 10) continue
-      const h1 = summary.find(
-        (s) => s.period.start_date === fy.period.start_date && s.duration_months < 10,
-      )
-      if (!h1) continue
-      const rev = fy.revenue
-      const h1v = h1.revenue
-      if (rev == null || h1v == null || rev === 0) continue
-      return {
-        fy: fy.period.label,
-        h1: h1v,
-        h2: rev - h1v,
-        h1pct: (h1v / rev) * 100,
-        h2pct: ((rev - h1v) / rev) * 100,
-      }
-    }
-    return null
-  })()
-
-  const fullYear = summary.find((s) => s.duration_months >= 10)
+  const fullYear =  summary.find((s) => s.duration_months >= 10)
   const fyRevenue = fullYear?.revenue ?? null
 
   const eurOrDash = (v: number | null | undefined) =>
@@ -992,213 +837,7 @@ export function Dashboard({ summary, selected }: DashboardProps) {
         )}
 
         {/* Period comparison */}
-        <section className="panel comparison">
-          <div className="panel__head">
-            <h2>Compare periods</h2>
-            <span className="panel__hint">Calculated from reported figures · each change is vs the previous period</span>
-          </div>
-
-          <div className="compare__form">
-            <div className="compare__select">
-              <label id="compare-add-label">Add period</label>
-              <PeriodPicker
-                options={availableToAdd}
-                onPick={(label) => setCompareLabels((prev) => [...prev, label])}
-              />
-            </div>
-            {comparablePeriods.length > 2 && (
-              <button
-                type="button"
-                className="btn btn--small"
-                onClick={() => setCompareLabels(comparablePeriods.map((s) => s.period.label))}
-              >
-                Add all
-              </button>
-            )}
-            {compareLabels.length > 0 && (
-              <button type="button" className="btn btn--small" onClick={() => setCompareLabels([])}>
-                Clear
-              </button>
-            )}
-          </div>
-          <div className="compare__chips">
-            {comparedPeriods.map((s) => (
-              <span key={s.period.label} className="compare__chip">
-                {s.period.label}
-                <button
-                  type="button"
-                  aria-label={`Remove ${s.period.label}`}
-                  onClick={() =>
-                    setCompareLabels((prev) => prev.filter((label) => label !== s.period.label))
-                  }
-                >
-                  ×
-                </button>
-              </span>
-            ))}
-          </div>
-          {!comparing && (
-            <div className="panel__empty">Add at least two periods to compare them.</div>
-          )}
-
-          {comparing && (
-            <>
-              {mixedDurations && (
-                <p className="provenance__note">
-                  The selected periods have different lengths, so absolute differences are not
-                  like-for-like.
-                </p>
-              )}
-              <table className="compare__table">
-                <thead>
-                  <tr>
-                    <th>Metric</th>
-                    {comparedPeriods.map((s) => (
-                      <th key={s.period.label}>{s.period.label}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {compareMetrics.map((row) => {
-                    const show = (v: number | null) =>
-                      v === null ? 'n/d' : row.kind === 'eur' ? formatCompactEur(v) : formatPct(v)
-                    return (
-                      <tr key={row.label}>
-                        <td>{row.label}</td>
-                        {comparedPeriods.map((s, index) => {
-                          const value = row.get(s)
-                          const previous = index > 0 ? row.get(comparedPeriods[index - 1]) : null
-                          const diff =
-                            value != null && previous != null ? value - previous : null
-                          const pct =
-                            row.kind === 'eur' && diff !== null && previous !== 0
-                              ? (diff / Math.abs(previous as number)) * 100
-                              : null
-                          return (
-                            <td key={s.period.label}>
-                              <span className="compare__value">{show(value)}</span>
-                              {index > 0 && (
-                                <span
-                                  className={`compare__delta ${
-                                    diff === null ? '' : diff < 0 ? 'is-neg' : 'is-pos'
-                                  }`}
-                                >
-                                  {diff === null
-                                    ? 'n/d'
-                                    : `${diff > 0 ? '+' : ''}${
-                                        row.kind === 'eur'
-                                          ? formatCompactEur(diff)
-                                          : `${diff.toFixed(1)} pp`
-                                      }${
-                                        pct === null
-                                          ? ''
-                                          : ` · ${pct > 0 ? '+' : ''}${pct.toFixed(1)}%`
-                                      }`}
-                                </span>
-                              )}
-                            </td>
-                          )
-                        })}
-                      </tr>
-                    )
-                  })}
-                </tbody>
-              </table>
-
-          <div className="grid-2 compare__trends">
-            <div className="panel">
-              <div className="panel__head">
-                <h2>Revenue, Gross Profit &amp; Operating Loss</h2>
-                <span className="panel__hint">Reported amounts · selected periods</span>
-              </div>
-              <ResponsiveContainer width="100%" height={300}>
-                <BarChart data={compareData} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#eceeed" vertical={false} />
-                  <XAxis dataKey="name" tick={{ fill: '#6b7370', fontSize: 13 }} axisLine={false} tickLine={false} />
-                  <YAxis
-                    tick={{ fill: '#6b7370', fontSize: 12 }}
-                    axisLine={false}
-                    tickLine={false}
-                    tickFormatter={(v) => formatCompactEur(v)}
-                  />
-                  <Tooltip formatter={(v) => formatCompactEur(Number(v))} />
-                  <Legend />
-                  <Bar dataKey="Revenue" fill="#20948B" radius={[6, 6, 0, 0]} />
-                  <Bar dataKey="Gross Profit" fill="#023C28" radius={[6, 6, 0, 0]} />
-                  <Bar dataKey="Operating Loss" fill="#FFBC7D" radius={[6, 6, 0, 0]} />
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-
-            <div className="panel">
-              <div className="panel__head">
-                <h2>Margin Trend</h2>
-                <span className="panel__hint">Derived percentages · selected periods</span>
-              </div>
-              <ResponsiveContainer width="100%" height={300}>
-                <LineChart data={marginData} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#eceeed" vertical={false} />
-                  <XAxis dataKey="name" tick={{ fill: '#6b7370', fontSize: 13 }} axisLine={false} tickLine={false} />
-                  <YAxis
-                    tick={{ fill: '#6b7370', fontSize: 12 }}
-                    axisLine={false}
-                    tickLine={false}
-                    tickFormatter={(v) => `${v}%`}
-                  />
-                  <Tooltip formatter={(v) => formatPct(Number(v))} />
-                  <Legend />
-                  <Line type="monotone" dataKey="Gross Margin" stroke="#20948B" strokeWidth={3} dot={{ r: 5 }} />
-                  <Line type="monotone" dataKey="Operating Margin" stroke="#FFBC7D" strokeWidth={3} dot={{ r: 5 }} />
-                </LineChart>
-              </ResponsiveContainer>
-            </div>
-          </div>
-
-          <div className="grid-2 compare__trends">
-            <RatioPanel
-              title="Growth over time"
-              hint={`${current?.period.label} selected`}
-              items={[
-                {
-                  label: 'Revenue growth YoY',
-                  value: yoy ? formatPct(yoy.pct) : 'n/d',
-                  origin: yoy ? 'derived' : 'n/d',
-                  formula: 'Same-duration revenue vs the period starting 12 months earlier',
-                  tone: yoy ? (yoy.pct >= 0 ? 'pos' : 'neg') : undefined,
-                  note: yoy
-                    ? `${current?.period.label} vs ${yoy.label} — same-length period one year earlier.`
-                    : 'No prior-year comparable of the same length is loaded for this period.',
-                },
-                {
-                  label: 'FY2025 seasonality (H1 / H2)',
-                  value: seasonality
-                    ? `${seasonality.h1pct.toFixed(0)}% / ${seasonality.h2pct.toFixed(0)}%`
-                    : 'n/d',
-                  origin: seasonality ? 'derived' : 'n/d',
-                  formula: 'H1 and residual H2 revenue as a share of full-year revenue',
-                  note: seasonality
-                    ? `H1 ${formatCompactEur(seasonality.h1)} vs implied H2 ${formatCompactEur(
-                        seasonality.h2,
-                      )}.`
-                    : undefined,
-                },
-              ]}
-            />
-            <div className="panel">
-              <div className="panel__head">
-                <h2>How to read this comparison</h2>
-              </div>
-              <ul className="notes">
-                <li>
-                  <strong>Short history.</strong> Only three periods are available, so trend and
-                  seasonality views are indicative rather than statistically robust.
-                </li>
-              </ul>
-            </div>
-          </div>
-            </>
-          )}
-        </section>
+        <PeriodComparison summary={summary} />
       </div>
     </div>
   )
