@@ -131,9 +131,38 @@ export function Dashboard({ summary, selected }: DashboardProps) {
   const [sourceDocumentError] = useState('')
   const [compareLabels, setCompareLabels] = useState<string[]>([])
 
-  const comparedPeriods = summary
+  // Temporary preview: add ?mock=1 to the URL to append a synthetic period.
+  const comparablePeriods = useMemo(() => {
+    if (!new URLSearchParams(window.location.search).has('mock') || !summary.length) return summary
+    const base = [...summary].sort((x, y) => x.period.end_date.localeCompare(y.period.end_date)).at(-1)!
+    const shiftYear = (date: string) => `${Number(date.slice(0, 4)) + 1}${date.slice(4)}`
+    const scale = (v: number | null, f: number) => (v == null ? null : v * f)
+    const mock: FinancialSummary = {
+      ...base,
+      period: {
+        ...base.period,
+        id: -1,
+        label: `${base.period.label.replace(/\d{4}$/, (y) => String(Number(y) + 1))} (mock)`,
+        start_date: shiftYear(base.period.start_date),
+        end_date: shiftYear(base.period.end_date),
+      },
+      revenue: scale(base.revenue, 1.45),
+      gross_profit: scale(base.gross_profit, 1.6),
+      operating_loss: scale(base.operating_loss, 0.6),
+      gross_margin: base.gross_margin == null ? null : base.gross_margin + 3,
+      operating_margin: base.operating_margin == null ? null : base.operating_margin + 12,
+      cash: scale(base.cash, 0.8),
+      debt: scale(base.debt, 0.9),
+      revenue_yoy_change_pct: null,
+      revenue_yoy_period_label: null,
+    }
+    return [...summary, mock]
+  }, [summary])
+
+  const comparedPeriods = comparablePeriods
     .filter((s) => compareLabels.includes(s.period.label))
     .sort((x, y) => x.period.start_date.localeCompare(y.period.start_date))
+  const availableToAdd = comparablePeriods.filter((s) => !compareLabels.includes(s.period.label))
   const comparing = comparedPeriods.length >= 2
   const firstPeriod = comparedPeriods[0]
   const lastPeriod = comparedPeriods[comparedPeriods.length - 1]
@@ -906,26 +935,61 @@ export function Dashboard({ summary, selected }: DashboardProps) {
           </div>
 
           <div className="compare__form">
-            <fieldset className="compare__periods">
-              <legend>Select two or more periods to compare</legend>
-              {summary.map((s) => (
-                <label key={s.period.label} className="compare__check">
-                  <input
-                    type="checkbox"
-                    checked={compareLabels.includes(s.period.label)}
-                    onChange={(e) =>
-                      setCompareLabels((prev) =>
-                        e.target.checked
-                          ? [...prev, s.period.label]
-                          : prev.filter((label) => label !== s.period.label),
-                      )
-                    }
-                  />
-                  {s.period.label} ({s.period.start_date} to {s.period.end_date})
-                </label>
-              ))}
-            </fieldset>
+            <div className="compare__select">
+              <label htmlFor="compare-add">Add period</label>
+              <select
+                id="compare-add"
+                value=""
+                disabled={!availableToAdd.length}
+                onChange={(e) => {
+                  const label = e.target.value
+                  if (label) setCompareLabels((prev) => [...prev, label])
+                }}
+              >
+                <option value="">
+                  {availableToAdd.length ? 'Select a period to add' : 'All periods added'}
+                </option>
+                {availableToAdd.map((s) => (
+                  <option key={s.period.label} value={s.period.label}>
+                    {s.period.label} ({s.period.start_date} to {s.period.end_date})
+                  </option>
+                ))}
+              </select>
+            </div>
+            {comparablePeriods.length > 2 && (
+              <button
+                type="button"
+                className="btn btn--small"
+                onClick={() => setCompareLabels(comparablePeriods.map((s) => s.period.label))}
+              >
+                Add all
+              </button>
+            )}
+            {compareLabels.length > 0 && (
+              <button type="button" className="btn btn--small" onClick={() => setCompareLabels([])}>
+                Clear
+              </button>
+            )}
           </div>
+          <div className="compare__chips">
+            {comparedPeriods.map((s) => (
+              <span key={s.period.label} className="compare__chip">
+                {s.period.label}
+                <button
+                  type="button"
+                  aria-label={`Remove ${s.period.label}`}
+                  onClick={() =>
+                    setCompareLabels((prev) => prev.filter((label) => label !== s.period.label))
+                  }
+                >
+                  ×
+                </button>
+              </span>
+            ))}
+          </div>
+          {!comparing && (
+            <div className="panel__empty">Add at least two periods to compare them.</div>
+          )}
 
           {comparing && (
             <>
