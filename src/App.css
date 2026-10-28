@@ -2033,6 +2033,18 @@
   color: var(--senus-text-muted);
 }
 
+.compare__value {
+  display: block;
+  font-weight: 600;
+}
+
+.compare__delta {
+  display: block;
+  margin-top: 0.125rem;
+  font-size: 0.75rem;
+  white-space: nowrap;
+}
+
 .compare__table .is-neg {
   color: #b3261e;
 }

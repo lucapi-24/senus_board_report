@@ -230,8 +230,6 @@ export function Dashboard({ summary, selected }: DashboardProps) {
     .sort((x, y) => x.period.start_date.localeCompare(y.period.start_date))
   const availableToAdd = comparablePeriods.filter((s) => !compareLabels.includes(s.period.label))
   const comparing = comparedPeriods.length >= 2
-  const firstPeriod = comparedPeriods[0]
-  const lastPeriod = comparedPeriods[comparedPeriods.length - 1]
   const compareMetrics: {
     label: string
     kind: 'eur' | 'pct'
@@ -997,7 +995,7 @@ export function Dashboard({ summary, selected }: DashboardProps) {
         <section className="panel comparison">
           <div className="panel__head">
             <h2>Compare periods</h2>
-            <span className="panel__hint">Calculated from reported figures · change = latest vs earliest selected</span>
+            <span className="panel__hint">Calculated from reported figures · each change is vs the previous period</span>
           </div>
 
           <div className="compare__form">
@@ -1058,37 +1056,49 @@ export function Dashboard({ summary, selected }: DashboardProps) {
                     {comparedPeriods.map((s) => (
                       <th key={s.period.label}>{s.period.label}</th>
                     ))}
-                    <th>Change</th>
-                    <th>Change %</th>
                   </tr>
                 </thead>
                 <tbody>
                   {compareMetrics.map((row) => {
-                    const first = row.get(firstPeriod)
-                    const last = row.get(lastPeriod)
-                    const diff = first != null && last != null ? last - first : null
-                    const pct =
-                      row.kind === 'eur' && diff !== null && first !== 0
-                        ? (diff / Math.abs(first as number)) * 100
-                        : null
                     const show = (v: number | null) =>
                       v === null ? 'n/d' : row.kind === 'eur' ? formatCompactEur(v) : formatPct(v)
                     return (
                       <tr key={row.label}>
                         <td>{row.label}</td>
-                        {comparedPeriods.map((s) => (
-                          <td key={s.period.label}>{show(row.get(s))}</td>
-                        ))}
-                        <td className={diff === null ? '' : diff < 0 ? 'is-neg' : 'is-pos'}>
-                          {diff === null
-                            ? 'n/d'
-                            : `${diff > 0 ? '+' : ''}${
-                                row.kind === 'eur'
-                                  ? formatCompactEur(diff)
-                                  : `${diff.toFixed(1)} pp`
-                              }`}
-                        </td>
-                        <td>{pct === null ? '—' : `${pct > 0 ? '+' : ''}${pct.toFixed(1)}%`}</td>
+                        {comparedPeriods.map((s, index) => {
+                          const value = row.get(s)
+                          const previous = index > 0 ? row.get(comparedPeriods[index - 1]) : null
+                          const diff =
+                            value != null && previous != null ? value - previous : null
+                          const pct =
+                            row.kind === 'eur' && diff !== null && previous !== 0
+                              ? (diff / Math.abs(previous as number)) * 100
+                              : null
+                          return (
+                            <td key={s.period.label}>
+                              <span className="compare__value">{show(value)}</span>
+                              {index > 0 && (
+                                <span
+                                  className={`compare__delta ${
+                                    diff === null ? '' : diff < 0 ? 'is-neg' : 'is-pos'
+                                  }`}
+                                >
+                                  {diff === null
+                                    ? 'n/d'
+                                    : `${diff > 0 ? '+' : ''}${
+                                        row.kind === 'eur'
+                                          ? formatCompactEur(diff)
+                                          : `${diff.toFixed(1)} pp`
+                                      }${
+                                        pct === null
+                                          ? ''
+                                          : ` · ${pct > 0 ? '+' : ''}${pct.toFixed(1)}%`
+                                      }`}
+                                </span>
+                              )}
+                            </td>
+                          )
+                        })}
                       </tr>
                     )
                   })}
