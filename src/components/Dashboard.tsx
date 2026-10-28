@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import {
   ResponsiveContainer,
   BarChart,
@@ -30,7 +30,6 @@ import {
   type PeriodDetail,
   type AIInsight,
   type KPIValue,
-  type PeriodCompareResult,
   toNumber,
   formatCompactEur,
   formatPct,
@@ -129,78 +128,23 @@ export function Dashboard({ summary, selected }: DashboardProps) {
   const [detail, setDetail] = useState<PeriodDetail | null>(null)
   const [insights, setInsights] = useState<AIInsight[]>([])
   const [insightsLoading, setInsightsLoading] = useState(Boolean(selected))
-  const [sourceDocumentError, setSourceDocumentError] = useState('')
-  const [comparison, setComparison] = useState<PeriodCompareResult | null>(null)
-  const [comparisonLoading, setComparisonLoading] = useState(false)
+  const [sourceDocumentError] = useState('')
   const [compareSelection, setCompareSelection] = useState<{
     label_a: string | null
     label_b: string | null
   }>({ label_a: null, label_b: null })
 
-  const loadInsights = useCallback(async (force = false) => {
-    if (!selected) return
-    try {
-      const savedInsights = await api.insights(selected, force)
-      setInsights(savedInsights)
-    } catch (error) {
-      setInsights([insightLoadError(error)])
-    } finally {
-      setInsightsLoading(false)
-    }
-  }, [selected])
-
-  const openSourcePage = async (page: number) => {
-    if (detail?.source_doc_id == null) return
-    try {
-      setSourceDocumentError('')
-      await api.openDocumentFile(detail.source_doc_id, page)
-    } catch (error) {
-      setSourceDocumentError(
-        error instanceof Error ? error.message : 'Could not open the source PDF.',
-      )
-    }
-  }
-
-  const handleCompare = async () => {
-    if (!compareSelection.label_a || !compareSelection.label_b || compareSelection.label_a === compareSelection.label_b) return
-    setComparisonLoading(true)
-    try {
-      const result = await api.comparePeriods({
-        period_label_a: compareSelection.label_a,
-        period_label_b: compareSelection.label_b,
-      })
-      setComparison(result)
-    } catch (error) {
-      let message = error instanceof Error ? error.message : 'Comparison failed. Please try again.'
-      try {
-        const payload: unknown = JSON.parse(message)
-        if (
-          typeof payload === 'object' &&
-          payload !== null &&
-          'detail' in payload &&
-          typeof payload.detail === 'string'
-        ) {
-          message = payload.detail
-        }
-      } catch {
-        // Keep the original request error when it is not JSON.
-      }
-      setComparison({
-        label_a: compareSelection.label_a,
-        label_b: compareSelection.label_b,
-        insight: message,
-        confidence: 0,
-        data: null,
-        interpretation: null,
-        verified_claims: 0,
-        total_claims: 0,
-        sources: [],
-        evidence: [],
-      })
-    } finally {
-      setComparisonLoading(false)
-    }
-  }
+  const periodA = summary.find((s) => s.period.label === compareSelection.label_a)
+  const periodB = summary.find((s) => s.period.label === compareSelection.label_b)
+  const compareRows: { label: string; kind: 'eur' | 'pct'; a: number | null; b: number | null }[] = [
+    { label: 'Revenue', kind: 'eur', a: toNumber(periodA?.revenue), b: toNumber(periodB?.revenue) },
+    { label: 'Gross profit', kind: 'eur', a: toNumber(periodA?.gross_profit), b: toNumber(periodB?.gross_profit) },
+    { label: 'Operating loss', kind: 'eur', a: toNumber(periodA?.operating_loss), b: toNumber(periodB?.operating_loss) },
+    { label: 'Gross margin', kind: 'pct', a: periodA?.gross_margin ?? null, b: periodB?.gross_margin ?? null },
+    { label: 'Operating margin', kind: 'pct', a: periodA?.operating_margin ?? null, b: periodB?.operating_margin ?? null },
+    { label: 'Cash', kind: 'eur', a: toNumber(periodA?.cash), b: toNumber(periodB?.cash) },
+    { label: 'Debt', kind: 'eur', a: toNumber(periodA?.debt), b: toNumber(periodB?.debt) },
+  ]
 
   useEffect(() => {
     if (!selected) return
@@ -418,14 +362,6 @@ export function Dashboard({ summary, selected }: DashboardProps) {
             <div>
               <span className="dashboard__eyebrow">BOARD REPORT · SENUS PLC</span>
               <h1 className="dashboard__title">Financial Performance</h1>
-              <p className="dashboard__lede">
-                AI-extracted financials from Senus source documents, presented for Management, the
-                Board, Equity Investors and Credit Providers.
-              </p>
-              <p className="dashboard__note">
-                HY2026 and its HY2025 comparative are extracted from the source report in full.
-                FY2025 is available as revenue only (from the business review narrative).
-              </p>
             </div>
           </div>
         </div>
@@ -958,6 +894,7 @@ export function Dashboard({ summary, selected }: DashboardProps) {
         </section>
 
         {/* AI insights */}
+        {(insightsLoading || insights.length > 0) && (
         <section className="insights">
           <div className="insights__head">
             <div className="insights__title">
@@ -965,19 +902,8 @@ export function Dashboard({ summary, selected }: DashboardProps) {
                 <Sparkles size={16} /> AI Analysis
               </span>
               <h2>Board Insights</h2>
-              <p>Generated from {current?.period.label} financials using an LLM analyst.</p>
+              <p>Points from the {current?.period.label} report text that the KPIs do not show.</p>
             </div>
-            <button
-              className="btn btn-ghost"
-              onClick={() => {
-                setInsightsLoading(true)
-                void loadInsights(true)
-              }}
-              disabled={insightsLoading}
-            >
-              <RefreshCw size={16} className={insightsLoading ? 'spin' : ''} />
-              Retry / regenerate
-            </button>
           </div>
 
           {insightsLoading && !insights.length ? (
@@ -990,44 +916,32 @@ export function Dashboard({ summary, selected }: DashboardProps) {
               {insights.map((insight, i) => (
                 <article key={i} className="insight-card">
                   <div className="insight-card__head">
-                    <h3>{insight.section}</h3>
-                    <div className="insight-card__confidence">
-                      <span>
-                        {insight.verified_claims}/{insight.total_claims} cifras verificadas
-                      </span>
-                      {[...new Set(insight.sources.flatMap((source) => source.pages))]
-                        .sort((a, b) => a - b)
-                        .map((page) => (
-                          <button
-                            key={page}
-                            className="btn btn-ghost"
-                            type="button"
-                            aria-label={`Abrir ${selected} en página ${page} del PDF fuente`}
-                            disabled={detail?.source_doc_id == null}
-                            onClick={() => void openSourcePage(page)}
-                          >
-                            p. {page}
-                          </button>
-                        ))}
-                    </div>
+                    <h3>{insight.section.charAt(0).toUpperCase() + insight.section.slice(1)}</h3>
+                    {insight.total_claims > 0 && (
+                      <div className="insight-card__confidence">
+                        <span>
+                          {insight.verified_claims}/{insight.total_claims} verified figures
+                        </span>
+                      </div>
+                    )}
                   </div>
                   <p className="insight-card__statement">
                     {insight.interpretation ?? insight.data ?? insight.insight}
                   </p>
                   <details className="insight-card__details">
-                    <summary>Fuentes y cálculo</summary>
+                    <summary>Sources and Calculations</summary>
                     {insight.data && (
                       <p className="insight-card__statement">
-                        <strong>Datos</strong> {insight.data}
+                        <strong>Data</strong> {insight.data}
                       </p>
                     )}
-                    <ul className="insight-card__sources" aria-label="Fuentes de datos verificadas">
+                    <ul className="insight-card__sources" aria-label="Verified data sources">
                       {insight.sources.map((source, sourceIndex) => (
                         <li key={`${source.source_id}-${sourceIndex}`}>
                           <span>
                             {source.claim_text} → {source.label} ({source.origin})
                           </span>
-                          {source.formula && <small>Fórmula: {source.formula}</small>}
+                          {source.formula && <small>Formula: {source.formula}</small>}
                           {source.source_note && <small>{source.source_note}</small>}
                           {source.pdf_excerpts.map((excerpt, excerptIndex) => (
                             <small key={`${source.source_id}-excerpt-${excerptIndex}`}>
@@ -1058,17 +972,13 @@ export function Dashboard({ summary, selected }: DashboardProps) {
           )}
           {sourceDocumentError && <p role="alert">{sourceDocumentError}</p>}
         </section>
+        )}
 
-        {/* AI comparison */}
-        <section className="insights comparison">
-          <div className="insights__head">
-            <div className="insights__title">
-              <span className="insights__badge">
-                <Sparkles size={16} /> AI Comparison
-              </span>
-              <h2>Compare Periods</h2>
-              <p>Compare periods with source-linked claims and verified figures.</p>
-            </div>
+        {/* Period comparison */}
+        <section className="panel comparison">
+          <div className="panel__head">
+            <h2>Compare periods</h2>
+            <span className="panel__hint">Calculated from reported figures · B minus A</span>
           </div>
 
           <div className="compare__form">
@@ -1100,76 +1010,59 @@ export function Dashboard({ summary, selected }: DashboardProps) {
                 ))}
               </select>
             </div>
-            <button
-              type="button"
-              className="btn btn--primary btn--small"
-              disabled={comparisonLoading || !compareSelection.label_a || !compareSelection.label_b || compareSelection.label_a === compareSelection.label_b}
-              onClick={handleCompare}
-            >
-              {comparisonLoading ? 'Comparing…' : 'Compare'}
-            </button>
           </div>
 
-          {comparisonLoading && (
-            <div className="state state--inline">
-              <RefreshCw className="spin" size={22} />
-              <p>Comparing periods…</p>
-            </div>
-          )}
-
-          {comparison && (
-            <div className="compare__result">
-              <div className="compare__columns">
-                <div className="compare__col">
-                  <h3>{comparison.label_a}</h3>
-                  <p className="muted small">{summary.find((s) => s.period.label === comparison.label_a)?.period.start_date} to {summary.find((s) => s.period.label === comparison.label_a)?.period.end_date}</p>
-                </div>
-                <div className="compare__col compare__col--arrow">→</div>
-                <div className="compare__col">
-                  <h3>{comparison.label_b}</h3>
-                  <p className="muted small">{summary.find((s) => s.period.label === comparison.label_b)?.period.start_date} to {summary.find((s) => s.period.label === comparison.label_b)?.period.end_date}</p>
-                </div>
-              </div>
-              <div className="compare__insight">
-                {comparison.data && (
-                  <p className="insight-card__statement">
-                    <strong>Data</strong> {comparison.data}
-                  </p>
-                )}
-                {comparison.interpretation && (
-                  <p className="insight-card__statement">
-                    <strong>Interpretation</strong> {comparison.interpretation}
-                  </p>
-                )}
-                {!comparison.data && !comparison.interpretation && <p>{comparison.insight}</p>}
-                {comparison.total_claims > 0 && (
-                  <span className="muted small">
-                    {comparison.verified_claims}/{comparison.total_claims} claims verified
-                  </span>
-                )}
-                {comparison.sources.length > 0 && (
-                  <ul className="insight-card__sources" aria-label="Verified comparison sources">
-                    {comparison.sources.map((source, sourceIndex) => (
-                      <li key={`${source.source_id}-${sourceIndex}`}>
-                        <span>
-                          {source.claim_text} → {source.period_label} · {source.label} ({source.origin})
-                          {source.pages.length > 0 && `, PDF p. ${source.pages.join(', ')}`}
-                        </span>
-                        {source.formula && <small>{source.formula}</small>}
-                        {source.source_note && <small>{source.source_note}</small>}
-                      </li>
-                    ))}
-                    {comparison.evidence.map((item, evidenceIndex) => (
-                      <li key={`comparison-evidence-${evidenceIndex}`}>
-                        <span>
-                          {item.period_label && `${item.period_label}, `}PDF p. {item.page}: “{item.quote}”
-                        </span>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </div>
-            </div>
+          {periodA && periodB && periodA !== periodB ? (
+            <>
+              {periodA.duration_months !== periodB.duration_months && (
+                <p className="provenance__note">
+                  These periods have different lengths ({periodA.duration_months} and{' '}
+                  {periodB.duration_months} months), so absolute differences are not like-for-like.
+                </p>
+              )}
+              <table className="compare__table">
+                <thead>
+                  <tr>
+                    <th>Metric</th>
+                    <th>{periodA.period.label}</th>
+                    <th>{periodB.period.label}</th>
+                    <th>Change</th>
+                    <th>Change %</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {compareRows.map((row) => {
+                    const diff =
+                      row.a != null && row.b != null ? row.b - row.a : null
+                    const pct =
+                      row.kind === 'eur' && diff !== null && row.a !== 0
+                        ? (diff / Math.abs(row.a as number)) * 100
+                        : null
+                    const show = (v: number | null) =>
+                      v === null ? 'n/d' : row.kind === 'eur' ? formatCompactEur(v) : formatPct(v)
+                    return (
+                      <tr key={row.label}>
+                        <td>{row.label}</td>
+                        <td>{show(row.a)}</td>
+                        <td>{show(row.b)}</td>
+                        <td className={diff === null ? '' : diff < 0 ? 'is-neg' : 'is-pos'}>
+                          {diff === null
+                            ? 'n/d'
+                            : `${diff > 0 ? '+' : ''}${
+                                row.kind === 'eur'
+                                  ? formatCompactEur(diff)
+                                  : `${diff.toFixed(1)} pp`
+                              }`}
+                        </td>
+                        <td>{pct === null ? '—' : `${pct > 0 ? '+' : ''}${pct.toFixed(1)}%`}</td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </>
+          ) : (
+            <div className="panel__empty">Select two different periods to compare them.</div>
           )}
         </section>
       </div>

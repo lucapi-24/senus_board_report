@@ -101,14 +101,16 @@ def test_validated_insight_is_persisted_with_sources(monkeypatch):
         kpis=[],
     )
     candidate = {
-        "section": "Revenue",
-        "data": "Revenue was {revenue}.",
-        "interpretation": "This is a reported figure.",
-        "claims": [
-            {"claim_text": "{revenue}", "source_id": "kpi:revenue", "value": 100}
-        ],
-        "evidence": [],
+        "section": "Going concern outlook",
+        "interpretation": "Management flags a dependency on a funding decision.",
+        "why_it_matters": "The board should ask how the dependency is mitigated.",
+        "evidence": [{"page": 3, "quote": "dependent on the funding decision"}],
     }
+    monkeypatch.setattr(
+        ai_insights,
+        "_narrative_pages",
+        lambda *_: {3: "The outlook is dependent on the funding decision."},
+    )
 
     class FakeResult:
         def __init__(self, period_value=None, rows=None):
@@ -164,15 +166,31 @@ def test_validated_insight_is_persisted_with_sources(monkeypatch):
     result = asyncio.run(ai_insights.generate_insights("HY2026", database))
 
     assert len(result) == 1
-    assert result[0].sources[0].label == "Revenue"
-    assert result[0].data == "Revenue was €100."
-    assert result[0].sources[0].claim_text == "€100"
-    assert result[0].sources[0].value == 100
+    assert result[0].section == "Going concern outlook"
+    assert result[0].evidence[0].page == 3
+    assert result[0].total_claims == 0
     assert len(database.saved) == 1
     saved_sources = json.loads(database.saved[0].sources_json)
     assert saved_sources["version"] == 1
-    assert saved_sources["claims"][0]["source_id"] == "kpi:revenue"
-    assert saved_sources["claims"][0]["verified"] is True
+    assert saved_sources["claims"] == []
+    assert saved_sources["evidence"][0]["quote"] == "dependent on the funding decision"
+
+
+def test_narrative_candidate_with_digits_or_bad_quote_is_discarded():
+    pages = {3: "The outlook is dependent on the funding decision."}
+    base = {
+        "section": "Outlook",
+        "interpretation": "Management flags a dependency.",
+        "why_it_matters": "Board attention is needed.",
+        "evidence": [{"page": 3, "quote": "dependent on the funding decision"}],
+    }
+    assert ai_insights._validate_narrative_candidate(base, pages)[0] is not None
+    with_digits = {**base, "interpretation": "Funding of 5 million is at risk."}
+    assert ai_insights._validate_narrative_candidate(with_digits, pages)[0] is None
+    bad_quote = {**base, "evidence": [{"page": 3, "quote": "invented sentence"}]}
+    assert ai_insights._validate_narrative_candidate(bad_quote, pages)[0] is None
+    no_evidence = {**base, "evidence": []}
+    assert ai_insights._validate_narrative_candidate(no_evidence, pages)[0] is None
 
 
 def test_marker_value_is_formatted_after_exact_source_verification():
@@ -386,12 +404,9 @@ def test_insight_prompt_uses_compact_kpis_and_stays_within_free_tier_budget(monk
             for index in range(24)
         }
     )
-    pdf_pages = {
-        5: "Turnover 354,813 340,931\n" + ("irrelevant full-page text " * 500)
-    }
     facts = ai_insights._insight_prompt_facts(source_index)
-    excerpts = ai_insights._insight_pdf_excerpts(source_index, pdf_pages)
-    prompt = ai_insights._build_insight_prompt("HY2026", 6, facts, excerpts)
+    narrative = ai_insights._narrative_pages(source_index, {5: "statements", 6: "Risk text " * 400})
+    prompt = ai_insights._build_narrative_prompt("HY2026", 6, facts, narrative)
     estimated_prompt_tokens = ai_insights._estimate_prompt_tokens(prompt)
 
     class FakeCompletions:
@@ -405,10 +420,8 @@ def test_insight_prompt_uses_compact_kpis_and_stays_within_free_tier_budget(monk
     )
     assert len(facts) == 25
     assert "pnl:Revenue" not in prompt
-    assert "irrelevant full-page text" not in prompt
-    assert "Use relevant available KPIs to explain relationships" in prompt
-    assert "one or two sentences" in prompt
-    assert len(excerpts[5].splitlines()) <= ai_insights.MAX_PDF_EXCERPT_LINES
+    assert list(narrative) == [6]
+    assert "do NOT repeat" in prompt
     assert estimated_prompt_tokens + ai_insights.INSIGHT_MAX_TOKENS < ai_insights.INSIGHT_TOKEN_BUDGET
     with caplog.at_level(logging.INFO, logger="app.services.ai_insights"):
         asyncio.run(ai_insights._request_insights(prompt, "HY2026"))
@@ -464,6 +477,7 @@ def test_groq_413_returns_clear_limit_message(monkeypatch):
         SimpleNamespace(chat=SimpleNamespace(completions=FakeCompletions())),
     )
 
+    monkeypatch.setattr(ai_insights, "_narrative_pages", lambda *_: {3: "text"})
     result = asyncio.run(ai_insights.generate_insights("HY2026", FakeDatabase()))
 
     assert result[0].section == "Groq request limit"
@@ -508,26 +522,14 @@ def test_groq_429_retries_once_after_retry_header(monkeypatch):
 
 def test_saved_insight_is_returned_without_regeneration(monkeypatch):
     saved_row = SimpleNamespace(
-        section="Revenue",
-        text=json.dumps({"data": "Revenue was €100.", "interpretation": ""}),
+        section="Outlook",
+        text=json.dumps({"data": None, "interpretation": "Management flags a dependency."}),
         confidence=1.0,
         sources_json=json.dumps(
             {
                 "version": 1,
-                "claims": [
-                    {
-                        "source_id": "kpi:revenue",
-                        "claim_text": "€100",
-                        "label": "Revenue",
-                        "value": 100,
-                        "origin": "reported",
-                        "formula": None,
-                        "pages": [5],
-                        "source_note": None,
-                        "verified": True,
-                    }
-                ],
-                "evidence": [],
+                "claims": [],
+                "evidence": [{"page": 3, "quote": "dependent on funding"}],
             }
         ),
     )
@@ -576,4 +578,4 @@ def test_saved_insight_is_returned_without_regeneration(monkeypatch):
     result = asyncio.run(ai_insights.generate_insights("HY2026", FakeDatabase()))
 
     assert len(result) == 1
-    assert result[0].data == "Revenue was €100."
+    assert result[0].interpretation == "Management flags a dependency."

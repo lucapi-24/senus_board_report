@@ -3,6 +3,7 @@ import json
 import logging
 import math
 import re
+import unicodedata
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 from pathlib import Path
@@ -473,7 +474,21 @@ def _build_insight_prompt(
     )
     return f"""Analyze the published or confirmed financial period {period_label} ({period_months} months).
 
-Available KPIs for this period (these are the only numeric sources you may cite):
+Liquidity metrics available (cite both when discussing liquidity):
+- current ratio (including contingent consideration): measures total current assets divided by total current liabilities including the contingent consideration
+- current ratio (excluding contingent consideration): measures total current assets divided by current liabilities excluding the contingent consideration
+
+Rule: never qualify liquidity as sufficient, solid or weak without citing both current ratios and noting they differ due to the contingent consideration. Do not cite the runway or the cash available in months (a separate alert shows that). If the cash figure is mentioned, relate it to another figure distinct from the runway, such as the gross margin or administrative expenses.
+
+Profitability structure:
+- Relate the gross margin to the administrative expense ratio over income, explaining the cost structure versus income scale implications. Do not attribute causes that are not quoted from the PDF.
+
+Data rule: the "data" field must contain only markers with their figures. The "interpretation" field adds the relationship and conclusion, without repeating the content of "data".
+
+All generated text must be in English. The fixed interface texts for insights must also be in English (replace "Sources and calculation", "verified figures" and "Open page" with their English equivalents).
+
+Remove duplicate sources in the dropdown (the same citation and page should appear only once).
+
 {serialized_facts}
 
 Minimal source lines from the same period (page numbers are citations; do not infer other facts):
@@ -481,22 +496,140 @@ Minimal source lines from the same period (page numbers are citations; do not in
 
 Return a JSON object with an "insights" array of 3-4 concise items. Each item must have:
 - "section": short topic without numeric markers or figures
-- "data": concise factual supporting detail, using only markers such as {{ebitda_margin}} instead of writing figures
-- "interpretation": one or two concise sentences that use markers such as {{gross_margin}} instead of writing figures
-- "claims": one object per marker, each {{"claim_text": exact marker copied from data or interpretation, "source_id": exact available-fact source_id, "value": exact numeric source value}}
+- "data": concise factual support using only markers such as {{gross_margin}} instead of writing figures
+- "interpretation": one or two sentences that explain the relationship and conclude, using markers such as {{admin_expense_ratio}} instead of writing figures
+- "why_it_matters": one qualitative sentence with no digits and no markers, explaining the board consequence
+- "claims": one object per marker, each {{"claim_text": exact marker copied from data or interpretation, "source_id": exact source_id, "value": exact numeric source value}}
 - "evidence": optional exact PDF quotations as [{{"page": page_number, "quote": exact quote}}]
 
 Rules:
-- Never write numeric digits in section, data, or interpretation; use a marker from the Available KPIs list for every figure.
-- Marker names are the listed KPI identifiers without the "kpi:" prefix. Never invent a marker.
+- Each finding must combine at least two different sources (KPIs, line items or backend-derived figures), or relate a figure to a quoted statement from the PDF. A finding that restates a single KPI or a single derived figure is invalid and will be discarded.
+- Never present an isolated KPI ("cash runway is X months") unless it is part of a relationship with another source. The runway alert is already shown separately.
+- Never write numeric digits in section, data, interpretation or why_it_matters; use a marker for every figure.
+- Never write a number in any other form either, including percentages, approximations or a bare number embedded in a word.
+- Do not put markers inside parentheses: a parenthesised figure is read as negative during verification.
+- Marker names are the listed source identifiers without the "kpi:" or "derived:" prefix. Never invent a marker.
+- When the Available facts entry has a source_id beginning with "derived:", use that full source_id in the claim; do not rewrite it as "kpi:".
 - Every marker must have exactly one claim with its matching source_id and exact numeric source value.
-- Cite only source IDs listed in Available KPIs. Never use unavailable facts or infer missing values.
-- Do not say why a metric changed, or attribute a cause, unless the entire causal sentence is quoted verbatim from a supplied excerpt and cited in evidence.
-- Use relevant available KPIs to explain relationships between metrics when helpful, such as gross margin alongside EBITDA margin; do not imply unsupported causation.
-- Keep the interpretation to one or two sentences. Prefer a concise relationship between the available figures over generic commentary.
+- Cite only source IDs listed in Available facts. Never use unavailable facts, recalculate a derived figure, or infer missing values.
+- Do not say why a metric changed, or attribute a cause, unless the entire causal sentence is quoted verbatim from a supplied excerpt and cited in evidence. Avoid causal verbs such as drive, reflect, cause, lead to, therefore or as a result unless the whole sentence is a supplied quotation.
 - Do not claim a contract, customer, cause, forecast, target, or event unless explicitly supported by these facts or quoted evidence.
 - Do not use confidence scores or add claims about other periods.
 - Keep the complete response concise enough to fit within the response token limit."""
+
+
+NARRATIVE_PAGE_CHARS = 2500
+NARRATIVE_TOTAL_CHARS = 14000
+_DIGIT_RE = re.compile(r"\d")
+
+
+def _narrative_pages(
+    source_index: Dict[str, Dict[str, Any]],
+    pdf_pages: Dict[int, str],
+) -> Dict[int, str]:
+    """Prose pages of the source PDF, excluding pages that hold the statements."""
+    statement_pages = {
+        page for source in source_index.values() for page in source["pages"]
+    }
+    pages: Dict[int, str] = {}
+    total = 0
+    for page in sorted(pdf_pages):
+        if page in statement_pages:
+            continue
+        text = pdf_pages[page][:NARRATIVE_PAGE_CHARS]
+        if total + len(text) > NARRATIVE_TOTAL_CHARS:
+            break
+        pages[page] = text
+        total += len(text)
+    return pages
+
+
+def _build_narrative_prompt(
+    period_label: str,
+    period_months: int,
+    facts: List[Dict[str, Any]],
+    pages: Dict[int, str],
+) -> str:
+    shown_kpis = ", ".join(str(fact["label"]) for fact in facts)
+    serialized_pages = json.dumps(
+        [{"page": page, "text": text} for page, text in pages.items()],
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+    return f"""You are an analyst preparing board notes for the period {period_label} ({period_months} months).
+
+The dashboard already shows these KPIs, so do NOT repeat, paraphrase or comment on them: {shown_kpis}.
+
+Using only the report text below, surface what the KPIs cannot tell the board: risks, commitments, contingencies, accounting or policy changes, management statements and outlook. Where the narrative is inconsistent with the dashboard KPIs, say so. Each finding must be anchored on a verbatim quote from the text.
+
+Report text by page:
+{serialized_pages}
+
+Return a JSON object with an "insights" array of 0-3 items. Return an empty array if the text contains nothing that is not already covered by the KPIs. Each item has:
+- "section": short topic, no digits
+- "interpretation": one or two sentences in English explaining what the board should note, no digits
+- "why_it_matters": one qualitative sentence in English, no digits
+- "evidence": 1-2 exact quotations copied verbatim from the text, as [{{"page": page_number, "quote": exact quote}}]. Digits are allowed only inside quotes.
+
+Rules:
+- Never write digits in section, interpretation or why_it_matters.
+- Do not invent facts, causes, forecasts or events that the quotes do not support.
+- Do not restate any KPI figure or ratio.
+- Keep the response concise."""
+
+
+def _normalise_quote(value: str) -> str:
+    value = unicodedata.normalize("NFKC", value)
+    value = re.sub(r"[\u2010-\u2015\u2212]", "-", value)
+    value = re.sub(r"[\u2018\u2019]", "'", value)
+    value = re.sub(r"[\u201c\u201d]", '"', value)
+    return _normalise_text(value)
+
+
+def _validate_narrative_candidate(
+    candidate: Dict[str, Any],
+    pages: Dict[int, str],
+) -> Tuple[Optional[AIInsight], str]:
+    section = candidate.get("section")
+    interpretation = candidate.get("interpretation")
+    why_it_matters = candidate.get("why_it_matters", "")
+    evidence = candidate.get("evidence")
+    if not all(isinstance(v, str) and v.strip() for v in (section, interpretation)):
+        return None, "missing required text fields"
+    if not isinstance(why_it_matters, str):
+        return None, "invalid why_it_matters"
+    if any(_DIGIT_RE.search(v) for v in (section, interpretation, why_it_matters)):
+        return None, "narrative text contains digits"
+    if not isinstance(evidence, list) or not evidence:
+        return None, "insight has no PDF evidence"
+
+    validated: List[InsightEvidence] = []
+    for item in evidence:
+        if not isinstance(item, dict):
+            return None, "evidence item is not an object"
+        page = item.get("page")
+        quote = item.get("quote")
+        if isinstance(page, bool) or not isinstance(page, int) or not isinstance(quote, str):
+            return None, "evidence item has invalid page or quote"
+        page_text = pages.get(page)
+        if (
+            not page_text
+            or not quote.strip()
+            or _normalise_quote(quote) not in _normalise_quote(page_text)
+        ):
+            return None, "evidence quote does not match the cited PDF page"
+        validated.append(InsightEvidence(page=page, quote=quote.strip()))
+
+    text = interpretation.strip()
+    if why_it_matters.strip():
+        text = f"{text} {why_it_matters.strip()}"
+    return AIInsight(
+        section=section.strip(),
+        insight=text,
+        interpretation=text,
+        confidence=1.0,
+        evidence=validated,
+    ), ""
 
 
 def _response_status(exc: Exception) -> Optional[int]:
@@ -900,12 +1033,16 @@ def _stored_insight(row: Insight) -> Optional[AIInsight]:
         return None
     claims = sources.get("claims", [])
     evidence = sources.get("evidence", [])
-    if not claims:
+    if not claims and not evidence:
         return None
     try:
         return AIInsight(
             section=row.section,
-            insight=f"Data: {content['data']}\nInterpretation: {content.get('interpretation') or ''}".strip(),
+            insight=(
+                f"Data: {content['data']}\nInterpretation: {content.get('interpretation') or ''}".strip()
+                if content.get("data")
+                else content.get("interpretation") or ""
+            ),
             data=content["data"],
             interpretation=content.get("interpretation"),
             confidence=float(row.confidence or 0),
@@ -971,6 +1108,9 @@ async def generate_insights(
         )]
 
     existing = await _load_persisted_insights(db, period.id)
+    # Rows with numeric claims come from the previous KPI-based format.
+    if any(item.sources for item in existing):
+        existing = []
     if existing and not force:
         return existing
     if not client:
@@ -994,13 +1134,12 @@ async def generate_insights(
         else:
             logger.warning("Insight source PDF is missing for document id %s", document.id)
 
-    _attach_pdf_excerpts(source_index, pdf_pages, period.label)
     facts = _insight_prompt_facts(source_index)
-    supplied_pages = _insight_pdf_excerpts(source_index, pdf_pages)
+    narrative = _narrative_pages(source_index, pdf_pages)
     period_months = period_duration_months(period.start_date, period.end_date)
-    prompt = _build_insight_prompt(
-        period.label, period_months, facts, supplied_pages
-    )
+    if not narrative:
+        return existing
+    prompt = _build_narrative_prompt(period.label, period_months, facts, narrative)
 
     try:
         response = await _request_insights(prompt, period.label)
@@ -1024,25 +1163,7 @@ async def generate_insights(
         if not isinstance(candidate, dict):
             logger.warning("Discarding malformed insight for period %s", period.label)
             continue
-        prepared, marker_values, reason = _prepare_marker_candidate(
-            candidate,
-            source_index,
-        )
-        if prepared is None:
-            insight = None
-        else:
-            insight, reason = _validate_candidate(
-                prepared,
-                source_index,
-                supplied_pages,
-            )
-            if insight is not None:
-                insight = _render_verified_candidate(
-                    insight,
-                    candidate,
-                    marker_values,
-                    period.label,
-                )
+        insight, reason = _validate_narrative_candidate(candidate, narrative)
         if insight is None:
             logger.warning(
                 "Discarding unverifiable insight for period %s (%s)",
@@ -1056,14 +1177,14 @@ async def generate_insights(
                 period_id=period.id,
                 section=insight.section,
                 text=json.dumps(
-                    {"data": insight.data, "interpretation": insight.interpretation},
+                    {"data": None, "interpretation": insight.interpretation},
                     ensure_ascii=False,
                 ),
                 confidence=insight.confidence,
                 sources_json=json.dumps(
                     {
                         "version": 1,
-                        "claims": [source.model_dump() for source in insight.sources],
+                        "claims": [],
                         "evidence": [item.model_dump() for item in insight.evidence],
                     },
                     ensure_ascii=False,
@@ -1071,30 +1192,16 @@ async def generate_insights(
             )
         )
 
-    if accepted:
-        await db.execute(
-            delete(Insight).where(
-                Insight.period_id == period.id,
-                ~Insight.section.like("Period comparison:%"),
-            )
+    await db.execute(
+        delete(Insight).where(
+            Insight.period_id == period.id,
+            ~Insight.section.like("Period comparison:%"),
         )
-        db.add_all(persisted)
-        await db.commit()
-        return accepted
-    logger.warning(
-        "No verified insights generated for period %s; persisted insights were retained",
-        period.label,
     )
-    return [
-        *existing,
-        AIInsight(
-            section="No verified insights",
-            insight=(
-                "The generated insights did not pass deterministic source and number "
-                "checks. Existing insights were kept; retry manually."
-            ),
-        ),
-    ]
+    if persisted:
+        db.add_all(persisted)
+    await db.commit()
+    return accepted
 
 
 def _comparison_source_index(periods: List[Period]) -> Dict[str, Dict[str, Any]]:
