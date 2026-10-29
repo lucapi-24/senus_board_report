@@ -8,6 +8,7 @@ import {
   type CompanyNarrative,
   type FinancialSummary,
 } from '../api/client'
+import { buildProjection, type Assumptions, type Projection } from './projection'
 import './Company.css'
 
 const STATUS_LABEL: Record<string, string> = {
@@ -115,32 +116,28 @@ function niceMax(value: number): number {
   return Math.ceil((value * 1.1) / step) * step
 }
 
-interface Trajectory {
-  years: string[]
-  target: number[]
-  estimate: number[] | null
-  cagr: number
-  growth: number | null
-  halfYearRevenue: number | null
-}
-
-function ObjectiveChart({ t }: { t: Trajectory }) {
+function ObjectiveChart({ p }: { p: Projection }) {
   const W = 640
   const H = 250
   const left = 56
   const right = 56
   const top = 18
   const bottom = 30
-  const maxValue = Math.max(...t.target) * 1.08
-  const x = (i: number) => left + (i / (t.years.length - 1)) * (W - left - right)
+  const maxValue = Math.max(...p.target) * 1.08
+  const x = (i: number) => left + (i / (p.years.length - 1)) * (W - left - right)
   const y = (v: number) => top + (1 - v / maxValue) * (H - top - bottom)
   const line = (values: number[]) => values.map((v, i) => `${i === 0 ? 'M' : 'L'}${x(i).toFixed(1)} ${y(v).toFixed(1)}`).join(' ')
-  const last = t.years.length - 1
-  const area = `${line(t.target)} L${x(last)} ${y(0)} L${x(0)} ${y(0)} Z`
+  const last = p.years.length - 1
+  const area = `${line(p.target)} L${x(last)} ${y(0)} L${x(0)} ${y(0)} Z`
   const ticks = [0, 0.25, 0.5, 0.75, 1].map((f) => maxValue * f)
+  const series: { values: number[]; kind: 'target' | 'pipeline' | 'estimate' }[] = [
+    { values: p.target, kind: 'target' },
+    ...(p.pipeline ? [{ values: p.pipeline, kind: 'pipeline' as const }] : []),
+    ...(p.base ? [{ values: p.base, kind: 'estimate' as const }] : []),
+  ]
 
   return (
-    <svg className="objective-svg" viewBox={`0 0 ${W} ${H}`} role="img" aria-label="Revenue target versus estimate">
+    <svg className="objective-svg" viewBox={`0 0 ${W} ${H}`} role="img" aria-label="Revenue target versus scenarios">
       {ticks.map((v) => (
         <g key={v}>
           <line className="grid" x1={left} x2={W - right} y1={y(v)} y2={y(v)} />
@@ -150,23 +147,18 @@ function ObjectiveChart({ t }: { t: Trajectory }) {
         </g>
       ))}
       <path className="target-area" d={area} />
-      <path className="target-line" d={line(t.target)} />
-      {t.estimate && <path className="estimate-line" d={line(t.estimate)} />}
-      {t.target.map((v, i) => (
-        <circle key={`t${i}`} className="target-dot" cx={x(i)} cy={y(v)} r="3.5" />
+      {series.map(({ values, kind }) => (
+        <g key={kind}>
+          <path className={`${kind}-line`} d={line(values)} />
+          {values.map((v, i) => (
+            <circle key={i} className={`${kind}-dot`} cx={x(i)} cy={y(v)} r="3.5" />
+          ))}
+          <text className={`point ${kind}-label`} x={x(last)} y={y(values[last]) - 9} textAnchor="end">
+            {formatCompactEur(values[last])}
+          </text>
+        </g>
       ))}
-      {t.estimate?.map((v, i) => (
-        <circle key={`e${i}`} className="estimate-dot" cx={x(i)} cy={y(v)} r="3.5" />
-      ))}
-      <text className="point target-label" x={x(last)} y={y(t.target[last]) - 9} textAnchor="end">
-        {formatCompactEur(t.target[last])}
-      </text>
-      {t.estimate && (
-        <text className="point estimate-label" x={x(last)} y={y(t.estimate[last]) - 9} textAnchor="end">
-          {formatCompactEur(t.estimate[last])}
-        </text>
-      )}
-      {t.years.map((label, i) => (
+      {p.years.map((label, i) => (
         <text key={label} className="axis" x={x(i)} y={H - 8} textAnchor="middle">
           {label}
         </text>
@@ -202,6 +194,11 @@ export function Company({
 }) {
   const [data, setData] = useState<CompanyNarrative | null>(null)
   const [error, setError] = useState('')
+  const [assumptions, setAssumptions] = useState<Assumptions>({
+    conversionMonths: 12,
+    openProbabilityPct: 30,
+    renews: false,
+  })
 
   useEffect(() => {
     let active = true
@@ -250,26 +247,28 @@ export function Company({
   const baseRevenue = fact(data, 'fy25_revenue_eur')
   const cagrPct = data.strategy?.min_cagr_pct ?? null
   const horizon = data.strategy?.period.match(/(\d{4})\D+(\d{4})/)
-  let trajectory: Trajectory | null = null
-  if (typeof baseRevenue === 'number' && cagrPct !== null && horizon) {
-    const first = Number(horizon[1])
-    const last = Number(horizon[2])
-    const growth = typeof current?.revenue_yoy_change_pct === 'number' ? current.revenue_yoy_change_pct : null
-    const steps = last - first + 1
-    trajectory = {
-      years: ['FY25', ...Array.from({ length: steps }, (_, i) => `FY${String(first + i).slice(2)}`)],
-      target: Array.from({ length: steps + 1 }, (_, i) => baseRevenue * (1 + cagrPct / 100) ** i),
-      estimate:
-        growth === null ? null : Array.from({ length: steps + 1 }, (_, i) => baseRevenue * (1 + growth / 100) ** i),
-      cagr: cagrPct,
-      growth,
-      halfYearRevenue: typeof current?.revenue === 'number' ? current.revenue : null,
-    }
-  }
-  const trajectoryEnd = trajectory ? trajectory.target.length - 1 : 0
+  const comparable = summary.find((s) => s.period.label === current?.revenue_yoy_period_label)
+  const sixMonths = current?.duration_months === 6 && comparable?.duration_months === 6
+  const projection: Projection | null =
+    typeof baseRevenue === 'number' && cagrPct !== null && horizon
+      ? buildProjection({
+          baseRevenue,
+          firstFy: Number(horizon[1]),
+          lastFy: Number(horizon[2]),
+          targetCagrPct: cagrPct,
+          growthPct: typeof current?.revenue_yoy_change_pct === 'number' ? current.revenue_yoy_change_pct : null,
+          currentHalf: sixMonths ? current?.revenue ?? null : null,
+          comparableHalf: sixMonths ? comparable?.revenue ?? null : null,
+          closedPipeline: closed?.value ?? null,
+          openPipeline: open?.value ?? null,
+          assumptions,
+        })
+      : null
+  const lastIdx = projection ? projection.target.length - 1 : 0
+  const pct = (v: number, of: number) => `${Math.round((v / of) * 100)}%`
   const requiredCagr =
-    trajectory?.estimate && trajectoryEnd > 1
-      ? ((trajectory.target[trajectoryEnd] / trajectory.estimate[1]) ** (1 / (trajectoryEnd - 1)) - 1) * 100
+    projection?.pipeline && lastIdx > 1
+      ? ((projection.target[lastIdx] / projection.pipeline[1]) ** (1 / (lastIdx - 1)) - 1) * 100
       : null
 
   const people = [...data.people].sort(
@@ -382,70 +381,122 @@ export function Company({
           </div>
         )}
 
-        {trajectory && (
+        {projection && (
           <section className="bd-panel objective-panel">
             <div className="panel-heading">
               <div>
                 <p className="eyebrow">COMPANY OBJECTIVE</p>
-                <h2>
-                  {data.strategy?.name}: revenue target vs. estimate
-                </h2>
+                <h2>{data.strategy?.name}: revenue target vs. scenarios</h2>
               </div>
               <div className="legend">
                 <span>
                   <i className="target" />
-                  Target ≥{trajectory.cagr}% CAGR
+                  Target ≥{cagrPct}% CAGR
                 </span>
-                {trajectory.estimate && (
+                {projection.pipeline && (
+                  <span>
+                    <i className="pipeline" />
+                    With pipeline
+                  </span>
+                )}
+                {projection.base && (
                   <span>
                     <i className="estimate" />
-                    Estimate at {trajectory.growth !== null && trajectory.growth > 0 ? '+' : ''}
-                    {trajectory.growth?.toFixed(1)}% growth
+                    Current trend
                   </span>
                 )}
               </div>
             </div>
             <div className="objective-content">
-              <ObjectiveChart t={trajectory} />
+              <ObjectiveChart p={projection} />
               <div className="objective-stats">
                 <div>
-                  <span>Target {trajectory.years[trajectoryEnd]}</span>
-                  <strong>{formatCompactEur(trajectory.target[trajectoryEnd])}</strong>
+                  <span>Target {projection.years[lastIdx]}</span>
+                  <strong>{formatCompactEur(projection.target[lastIdx])}</strong>
                   <small>
-                    from {formatCompactEur(baseRevenue as number)} in FY25 at ≥{trajectory.cagr}% a year
+                    from {formatCompactEur(baseRevenue as number)} in FY25 at ≥{cagrPct}% a year
                   </small>
                 </div>
-                {trajectory.estimate && (
+                {projection.base && (
                   <div>
-                    <span>Estimate {trajectory.years[trajectoryEnd]}</span>
-                    <strong className="estimate">{formatCompactEur(trajectory.estimate[trajectoryEnd])}</strong>
+                    <span>Current trend {projection.years[lastIdx]}</span>
+                    <strong className="estimate">{formatCompactEur(projection.base[lastIdx])}</strong>
                     <small>
-                      keeping the current {trajectory.growth?.toFixed(1)}% year-on-year growth (
-                      {Math.round((trajectory.estimate[trajectoryEnd] / trajectory.target[trajectoryEnd]) * 100)}% of target)
+                      {projection.years[1]}E {formatCompactEur(projection.base[1])}
+                      {projection.usesSeasonality ? ', adjusted for first-half seasonality' : ''} (
+                      {pct(projection.base[lastIdx], projection.target[lastIdx])} of target)
+                    </small>
+                  </div>
+                )}
+                {projection.pipeline && (
+                  <div>
+                    <span>With pipeline {projection.years[lastIdx]}</span>
+                    <strong className="pipeline">{formatCompactEur(projection.pipeline[lastIdx])}</strong>
+                    <small>
+                      {projection.years[1]}E {formatCompactEur(projection.pipeline[1])} (
+                      {pct(projection.pipeline[1], projection.target[1])} of the {projection.years[1]} target)
                     </small>
                   </div>
                 )}
                 {requiredCagr !== null && (
                   <div>
-                    <span>Growth needed from {trajectory.years[1]}E</span>
+                    <span>Growth needed from {projection.years[1]}E</span>
                     <strong>{requiredCagr.toFixed(0)}%</strong>
-                    <small>a year to still reach the {trajectory.years[trajectoryEnd]} target</small>
-                  </div>
-                )}
-                {trajectory.halfYearRevenue !== null && (
-                  <div>
-                    <span>{current?.period.label} vs {trajectory.years[1]} target</span>
-                    <strong>{Math.round((trajectory.halfYearRevenue / trajectory.target[1]) * 100)}%</strong>
-                    <small>
-                      {formatCompactEur(trajectory.halfYearRevenue)} of {formatCompactEur(trajectory.target[1])} in the first half
-                    </small>
+                    <small>a year, starting from the with-pipeline estimate</small>
                   </div>
                 )}
               </div>
             </div>
+            {projection.pipeline && (
+              <div className="assumptions">
+                <p>Assumptions (editable)</p>
+                <label>
+                  Conversion of closed {closed ? formatCompactEur(closed.value) : 'deals'}
+                  <select
+                    value={assumptions.conversionMonths}
+                    onChange={(e) => setAssumptions({ ...assumptions, conversionMonths: Number(e.target.value) })}
+                  >
+                    {[6, 12, 18, 24, 36].map((m) => (
+                      <option key={m} value={m}>
+                        over {m} months
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  Chance open {open ? formatCompactEur(open.value) : 'deals'} close
+                  <input
+                    type="number"
+                    min={0}
+                    max={100}
+                    step={5}
+                    value={assumptions.openProbabilityPct}
+                    onChange={(e) =>
+                      setAssumptions({
+                        ...assumptions,
+                        openProbabilityPct: Math.min(100, Math.max(0, Number(e.target.value) || 0)),
+                      })
+                    }
+                  />
+                  %
+                </label>
+                <label className="check">
+                  <input
+                    type="checkbox"
+                    checked={assumptions.renews}
+                    onChange={(e) => setAssumptions({ ...assumptions, renews: e.target.checked })}
+                  />
+                  Contracts renew at the same rate
+                </label>
+              </div>
+            )}
             <p className="bd-note">
-              Target: Senus 2030 strategy (annual compound sales growth of no less than {trajectory.cagr}%) applied to
-              FY25 revenue. The estimate is calculated here from reported figures and is not a company forecast.
+              Target: Senus 2030 (compound sales growth of no less than {cagrPct}%) applied to FY25 revenue. Scenarios
+              are calculated here, not company forecasts. The report gives no recognition timeline or closing odds for
+              the pipeline: closed deals are assumed to bill from January 2026 and open ones from July 2026, both on
+              top of current-trend revenue, so &ldquo;with pipeline&rdquo; is an upper bound if part of the closed
+              value is already in reported revenue. The probability is an illustrative assumption, not data from the
+              report.
             </p>
           </section>
         )}
