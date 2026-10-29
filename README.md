@@ -309,3 +309,7 @@ de validación en vivo a Groq; los tests del proveedor usan respuestas simuladas
 
 
 ### Dónde corregí a la IA
+
+### Insights y chat con IA (Company)
+
+GET /api/company/insights devuelve 3 interpretaciones generadas con IA (Groq, GROQ_API_KEY en ackend/.env) y POST /api/company/chat responde preguntas usando solo el contenido extraído del PDF (narrativa + estados financieros). Son textos generados, no citas; la vista lo indica.

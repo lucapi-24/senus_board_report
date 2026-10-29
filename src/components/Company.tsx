@@ -9,6 +9,7 @@ import {
   type FinancialSummary,
 } from '../api/client'
 import { buildProjection, type Projection } from './projection'
+import { CompanyChat, CompanyInsights } from './CompanyAI'
 import './Company.css'
 
 const STATUS_LABEL: Record<string, string> = {
@@ -41,14 +42,6 @@ const PEOPLE_GROUP_LABEL: Record<string, string> = {
   board: 'Board',
   management: 'Management',
   founder: 'Founders',
-}
-
-function Source({ page, quote }: { page: number; quote: string }) {
-  return (
-    <span className="bd-source" title={quote}>
-      p.{page}
-    </span>
-  )
 }
 
 function fact(data: CompanyNarrative, key: string): string | number | undefined {
@@ -623,42 +616,13 @@ export function Company({
           </aside>
         </div>
 
-        {data.drivers.length > 0 && (
-          <section className="insight-panel">
-            <div className="insight-header">
-              <div className="insight-title">
-                <span>
-                  <TrendingUp size={18} />
-                </span>
-                <div>
-                  <p className="eyebrow">FROM THE REPORT</p>
-                  <h2>Operating context &amp; Board commentary</h2>
-                </div>
-              </div>
-              <span className="insight-status">
-                <i />
-                {data.drivers.length} sourced statements
-              </span>
-            </div>
-            <div className="bd-insights">
-              {data.drivers.map((d, i) => (
-                <article key={d.text}>
-                  <span>{String(i + 1).padStart(2, '0')}</span>
-                  <div>
-                    <strong>{d.topic.replace('_', ' ')}</strong>
-                    <p>
-                      {d.text} <Source page={d.page} quote={d.quote} />
-                    </p>
-                  </div>
-                </article>
-              ))}
-            </div>
-          </section>
-        )}
+        <CompanyInsights period={selected || undefined} />
+
+        <CompanyChat period={selected || undefined} />
 
         <div className="bd-footer">
           <span>Confidential · Senus PLC Board of Directors</span>
-          <span>Every statement links to its page in {data.document.filename}</span>
+          <span>Source document: {data.document.filename} · AI sections are generated, not quoted</span>
         </div>
       </div>
     </div>

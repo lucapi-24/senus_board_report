@@ -383,6 +383,16 @@ export interface CompanyMilestone extends SourcedFact {
   details: Record<string, string | number>
 }
 
+export interface CompanyAIInsights {
+  insights: { title: string; text: string }[]
+  generated_by: 'ai'
+}
+
+export interface CompanyChatTurn {
+  role: 'user' | 'assistant'
+  content: string
+}
+
 export interface CompanyNarrative {
   document: { id: number; filename: string; status: string; period_label: string | null }
   company: Record<string, Sourced<string | number | string[]>>
@@ -421,6 +431,18 @@ export const api = {
   periods: () => get<Period[]>('/api/periods'),
   summary: () => get<FinancialSummary[]>('/api/summary'),
   periodDetail: (label: string) => get<PeriodDetail>(`/api/periods/${label}`),
+  companyInsights: (label?: string, force = false) =>
+    get<CompanyAIInsights>(
+      `/api/company/insights?${new URLSearchParams({ ...(label ? { period: label } : {}), ...(force ? { force: 'true' } : {}) })}`,
+    ),
+  companyChat: async (message: string, history: CompanyChatTurn[], label?: string) => {
+    const result = await send<{ message: string }>('/api/company/chat', 'POST', {
+      message,
+      history,
+      period: label,
+    })
+    return result?.message ?? ''
+  },
   company: (label?: string) =>
     get<CompanyNarrative>(`/api/company${label ? `?period=${encodeURIComponent(label)}` : ''}`),
   kpis: (label: string) => get<KPIValue[]>(`/api/kpis/${label}`),
