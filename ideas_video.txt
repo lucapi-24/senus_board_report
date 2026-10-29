@@ -1,63 +1,65 @@
-IDEAS PARA EL VÍDEO - Senus PLC Board Report
-=============================================
+VIDEO IDEAS - Senus PLC Board Report
+====================================
 
-DURACIÓN SUGERIDA: 4-6 minutos
+SUGGESTED LENGTH: 4-6 minutes, in English
 
-1. GANCHO (0:00-0:20)
-   - El problema: un board report en PDF son +50 páginas; encontrar la dirección
-     de la empresa y los números clave lleva tiempo y es fácil equivocarse.
-   - La propuesta: subes el PDF y obtienes un informe de consejo navegable,
-     con cada cifra trazada a su origen.
+1. HOOK (0:00-0:20)
+   - The problem: a board report PDF is dozens of pages; finding the company's direction
+     and the key numbers takes time and mistakes are easy.
+   - The idea: upload the PDF and get a navigable board report where every figure is
+     traced back to its source.
 
-2. VISIÓN GENERAL / ARQUITECTURA (0:20-0:50)
-   - React + Vite + TypeScript (frontend), FastAPI + SQLAlchemy + Alembic (backend),
-     PostgreSQL, todo con Docker Compose.
-   - Pipeline: PDF -> extracción -> validación/conciliación -> base de datos -> API -> UI.
-   - Groq (LLM) solo para insights y chat de la vista Company.
+2. OVERVIEW / ARCHITECTURE (0:20-0:50)
+   - Frontend: React + Vite + TypeScript.
+   - Backend: FastAPI + SQLAlchemy + Alembic, PostgreSQL, all running with Docker Compose.
+   - Pipeline: PDF -> extraction -> validation/reconciliation -> database -> API -> UI.
+   - An LLM (Groq) is used only for the Company insights and the chat.
 
-3. INGESTA DEL PDF (0:50-1:40)
-   - Subida del documento y revisión de lo extraído.
-   - Extracción de P&L, balance y cash flow + narrativa (clientes, hitos, consejo).
-   - Controles de coherencia: cuadre de totales, cruce con notas, conciliación entre periodos.
-   - Idea clave: lo que no tiene fuente en el PDF no se muestra.
+3. PDF INGESTION (0:50-1:40)
+   - Upload the document and review what was extracted.
+   - Extraction of P&L, balance sheet and cash flow, plus the narrative
+     (clients, milestones, board and management).
+   - Consistency checks: totals add up, cross-checks against notes, reconciliation between periods.
+   - Key principle: anything without a source in the PDF is not shown.
 
-4. VISTA COMPANY (1:40-3:10)  <- el plato fuerte
-   - Dirección de la empresa: Board & Management, clientes y partners, pipeline comercial,
+4. COMPANY VIEW (1:40-3:10)  <- the highlight
+   - Company direction: Board & Management, Customers & Partners, commercial pipeline,
      strategic milestones.
-   - Gráfica del objetivo: CAGR >= 50% sobre ingresos FY25 (EUR 836.991) hasta EUR 6,36M en FY30.
-     Comentar por qué NO hay proyección: decisión consciente de mostrar solo datos verificables.
-   - 3 insights generados con IA (no citas del texto) y notas de coherencia.
-   - Chat con IA: preguntar algo real, p. ej. "¿Qué riesgos hay en la deuda?" o
-     "¿Cómo se compara el crecimiento reportado con el objetivo?".
-     (Aviso: las respuestas tardan ~30 s; mejor acortar en edición.)
+   - Objective chart: at least 50% CAGR on FY25 revenue (EUR 836,991) up to EUR 6.36M in FY30.
+     Explain why there is NO forecast: a deliberate choice to show only verifiable data.
+   - Three AI-generated insights (not quotes from the text) and consistency notes.
+   - AI chat: ask something real, e.g. "What are the main risks around the balance sheet?" or
+     "How does the reported growth compare with the target?"
+     (Note: answers take ~30 s; trim the wait when editing.)
 
-5. VISTA FINANCIALS (3:10-4:10)
-   - KPIs, P&L, balance, cash flow por periodo.
-   - Compare periods: eliges solo con qué periodo comparar; el seleccionado es la referencia
-     y la comparación siempre va hacia delante en el tiempo (pasado -> futuro).
-   - Waterfall del resultado operativo.
+5. FINANCIALS VIEW (3:10-4:10)
+   - KPIs, P&L, balance sheet and cash flow per period.
+   - Compare periods: you only choose what to compare with; the selected period is the reference,
+     and comparisons always run forward in time (past -> future).
+   - Operating result waterfall.
 
-6. CALIDAD Y DECISIONES (4:10-4:50)
-   - Tests: backend (pytest) y frontend (vitest), validación y conciliación.
-   - Limpieza: se eliminó código no usado (~2.900 líneas) y la IA de Financials.
-   - Autenticación con login y seguridad básica.
+6. QUALITY AND DECISIONS (4:10-4:50)
+   - Tests: backend (pytest) and frontend (vitest), plus validation and reconciliation checks.
+   - Cleanup: ~2,900 lines of unused code removed, AI removed from Financials.
+   - Login and basic security.
 
-7. CIERRE (4:50-5:20)
-   - Aprendizajes: datos verificables > estimaciones bonitas; la IA como apoyo, no como fuente.
-   - Próximos pasos: más informes/periodos, deduplicar clientes e hitos, revisar discrepancia de deuda.
-   - Llamada a la acción: repositorio / README.
+7. WRAP-UP (4:50-5:20)
+   - Lessons learned: verifiable data beats nice-looking estimates; AI is a helper, not a source.
+   - Next steps: more reports and periods, deduplicate customers vs. milestones.
+   - Call to action: repository / README.
+   - One-line summary: "From the PDF to the board report, without making anything up."
 
-CONSEJOS DE GRABACIÓN
----------------------
-- Prepara la sesión antes: login (board@senus.com), datos cargados, insights ya generados (cache).
-- Pregunta del chat ensayada para evitar esperas; corta la espera en edición.
-- Zoom del navegador al 110-125% para que se lea bien.
-- Muestra primero Company (la historia) y luego Financials (la evidencia).
-- Evita enseñar claves (.env) en pantalla.
-- Cierra con un resumen en una frase: "Del PDF al informe de consejo, sin inventar nada."
+RECORDING TIPS
+--------------
+- Prepare the session beforehand: log in (board@senus.com), data loaded, insights already generated (cached).
+- Rehearse the chat question to avoid dead time; cut the wait in editing.
+- Browser zoom at 110-125% so text is readable.
+- Show Company first (the story), then Financials (the evidence).
+- Never show the .env file or API keys on screen.
 
-PUNTOS CRÍTICOS A MENCIONAR HONESTAMENTE
-----------------------------------------
-- La gráfica de objetivo es aritmética, no una predicción.
-- Hay una discrepancia pendiente en la deuda (EUR 463,6k en la UI vs EUR 76,5k en la maqueta).
-- First Milk/Biochar aparecen tanto en clientes como en hitos.
+POINTS TO MENTION HONESTLY
+--------------------------
+- The objective chart is arithmetic, not a prediction.
+- "Total creditors" (EUR 463.6k) is the sum of short- and long-term creditors; the report's
+  "bank debt" of EUR 76.5k corresponds to creditors due after more than one year only.
+- First Milk / Biochar appear both under customers and under milestones.
