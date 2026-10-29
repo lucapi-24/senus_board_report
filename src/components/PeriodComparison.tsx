@@ -38,7 +38,7 @@ const METRICS: Metric[] = [
   { label: 'Gross margin', kind: 'pct', get: (s) => s.gross_margin ?? null },
   { label: 'Operating margin', kind: 'pct', get: (s) => s.operating_margin ?? null },
   { label: 'Cash', kind: 'eur', get: (s) => toNumber(s.cash) },
-  { label: 'Debt', kind: 'eur', get: (s) => toNumber(s.debt) },
+  { label: 'Total creditors', kind: 'eur', get: (s) => toNumber(s.debt) },
 ]
 
 const line = (detail: PeriodDetail | null, name: string) =>

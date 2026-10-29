@@ -335,7 +335,7 @@ export function Company({
               <p>Cash at period end</p>
               <div className="cash-row">
                 <span>
-                  Bank debt <strong>{formatCompactEur(current.debt)}</strong>
+                  Total creditors <strong>{formatCompactEur(current.debt)}</strong>
                 </span>
               </div>
             </MetricCard>
