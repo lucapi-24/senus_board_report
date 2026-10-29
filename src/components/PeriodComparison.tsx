@@ -73,8 +73,14 @@ function PeriodSelect({
   )
 }
 
-export function PeriodComparison({ summary }: { summary: FinancialSummary[] }) {
-  const [baseLabel, setBaseLabel] = useState('')
+export function PeriodComparison({
+  summary,
+  selected,
+}: {
+  summary: FinancialSummary[]
+  selected: string
+}) {
+  const baseLabel = selected
   const [otherLabel, setOtherLabel] = useState('')
   const [details, setDetails] = useState<{ base: PeriodDetail; other: PeriodDetail } | null>(null)
 
@@ -175,34 +181,15 @@ export function PeriodComparison({ summary }: { summary: FinancialSummary[] }) {
 
       <div className="compare__form">
         <PeriodSelect
-          id="compare-base"
-          label="Base period"
-          value={baseLabel}
-          options={summary}
-          onChange={setBaseLabel}
-        />
-        <PeriodSelect
           id="compare-other"
-          label="Compare with"
+          label={`Compare ${baseLabel} with`}
           value={otherLabel}
           options={summary.filter((s) => s.period.label !== baseLabel)}
           onChange={setOtherLabel}
         />
-        {(baseLabel || otherLabel) && (
-          <button
-            type="button"
-            className="btn btn--small"
-            onClick={() => {
-              setBaseLabel('')
-              setOtherLabel('')
-            }}
-          >
-            Clear
-          </button>
-        )}
       </div>
 
-      {!comparing && <div className="panel__empty">Choose two periods to compare them.</div>}
+      {!comparing && <div className="panel__empty">Choose a period to compare it with {baseLabel}.</div>}
 
       {comparing && base && other && (
         <>

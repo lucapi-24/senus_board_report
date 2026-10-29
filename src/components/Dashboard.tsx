@@ -14,15 +14,12 @@ import {
   Timer,
   TrendingUp,
   Activity,
-  Sparkles,
-  RefreshCw,
 } from 'lucide-react'
 import { PeriodComparison } from './PeriodComparison'
 import {
   api,
   type FinancialSummary,
   type PeriodDetail,
-  type AIInsight,
   type KPIValue,
   toNumber,
   formatCompactEur,
@@ -62,22 +59,6 @@ interface RatioItem {
 function originLabel(origin?: string | null): string {
   if (origin === 'reported' || origin === 'derived') return origin
   return 'n/d'
-}
-
-function insightLoadError(error: unknown): AIInsight {
-  return {
-    section: 'Error',
-    insight: error instanceof Error
-      ? `Could not load saved insights: ${error.message}. Retry manually; the rest of the dashboard remains available.`
-      : 'Could not load saved insights. Retry manually; the rest of the dashboard remains available.',
-    data: null,
-    interpretation: null,
-    confidence: 0,
-    verified_claims: 0,
-    total_claims: 0,
-    sources: [],
-    evidence: [],
-  }
 }
 
 function negativeTone(value: number | null | undefined): 'neg' | undefined {
@@ -120,9 +101,6 @@ interface DashboardProps {
 
 export function Dashboard({ summary, selected }: DashboardProps) {
   const [detail, setDetail] = useState<PeriodDetail | null>(null)
-  const [insights, setInsights] = useState<AIInsight[]>([])
-  const [insightsLoading, setInsightsLoading] = useState(Boolean(selected))
-  const [sourceDocumentError] = useState('')
 
   useEffect(() => {
     if (!selected) return
@@ -133,25 +111,6 @@ export function Dashboard({ summary, selected }: DashboardProps) {
         if (active) setDetail(d)
       })
       .catch(() => undefined)
-    return () => {
-      active = false
-    }
-  }, [selected])
-
-  useEffect(() => {
-    if (!selected) return
-    let active = true
-    api
-      .insights(selected)
-      .then((savedInsights) => {
-        if (active) setInsights(savedInsights)
-      })
-      .catch((error: unknown) => {
-        if (active) setInsights([insightLoadError(error)])
-      })
-      .finally(() => {
-        if (active) setInsightsLoading(false)
-      })
     return () => {
       active = false
     }
@@ -291,9 +250,6 @@ export function Dashboard({ summary, selected }: DashboardProps) {
   const cashAtEnd = cf['Cash at end']
   const netCashMovement =
     cashAtStart != null && cashAtEnd != null ? cashAtEnd - cashAtStart : null
-  const interestCover = metricValue('interest_cover')
-  const showCoverageNote =
-    (interestCover !== null && interestCover < 0) || metricValue('dscr') === null
 
   return (
     <div className="dashboard">
@@ -691,27 +647,6 @@ export function Dashboard({ summary, selected }: DashboardProps) {
               },
             ]}
           />
-
-          <div className="panel">
-            <div className="panel__head">
-              <h2>How to read these ratios</h2>
-            </div>
-            <ul className="notes">
-              {showCoverageNote ? (
-                <li>
-                  <strong>DSCR is n/d.</strong> {metricNote('dscr') ?? 'Required inputs are not reported.'}
-                </li>
-              ) : null}
-              {contingentConsideration != null && contingentConsideration > 0 && (
-                <li>
-                  <strong>Contingent consideration shapes liquidity.</strong> Including the{' '}
-                  {formatCompactEur(contingentConsideration)} earn-out the current ratio is{' '}
-                  {multOrDash(metricValue('current_ratio'))}; excluding it it is{' '}
-                  {multOrDash(metricValue('current_ratio_ex_contingent'))}.
-                </li>
-              )}
-            </ul>
-          </div>
         </section>
 
         {/* Source & data quality */}
@@ -755,89 +690,8 @@ export function Dashboard({ summary, selected }: DashboardProps) {
           </p>
         </section>
 
-        {/* AI insights */}
-        {(insightsLoading || insights.length > 0) && (
-        <section className="insights">
-          <div className="insights__head">
-            <div className="insights__title">
-              <span className="insights__badge">
-                <Sparkles size={16} /> AI Analysis
-              </span>
-              <h2>Board Insights</h2>
-              <p>Points from the {current?.period.label} report text that the KPIs do not show.</p>
-            </div>
-          </div>
-
-          {insightsLoading && !insights.length ? (
-            <div className="state state--inline">
-              <RefreshCw className="spin" size={22} />
-              <p>Analysing financials…</p>
-            </div>
-          ) : (
-            <div className="insights__grid">
-              {insights.map((insight, i) => (
-                <article key={i} className="insight-card">
-                  <div className="insight-card__head">
-                    <h3>{insight.section.charAt(0).toUpperCase() + insight.section.slice(1)}</h3>
-                    {insight.total_claims > 0 && (
-                      <div className="insight-card__confidence">
-                        <span>
-                          {insight.verified_claims}/{insight.total_claims} verified figures
-                        </span>
-                      </div>
-                    )}
-                  </div>
-                  <p className="insight-card__statement">
-                    {insight.interpretation ?? insight.data ?? insight.insight}
-                  </p>
-                  <details className="insight-card__details">
-                    <summary>Sources and Calculations</summary>
-                    {insight.data && (
-                      <p className="insight-card__statement">
-                        <strong>Data</strong> {insight.data}
-                      </p>
-                    )}
-                    <ul className="insight-card__sources" aria-label="Verified data sources">
-                      {insight.sources.map((source, sourceIndex) => (
-                        <li key={`${source.source_id}-${sourceIndex}`}>
-                          <span>
-                            {source.claim_text} → {source.label} ({source.origin})
-                          </span>
-                          {source.formula && <small>Formula: {source.formula}</small>}
-                          {source.source_note && <small>{source.source_note}</small>}
-                          {source.pdf_excerpts.map((excerpt, excerptIndex) => (
-                            <small key={`${source.source_id}-excerpt-${excerptIndex}`}>
-                              {excerpt.period_label ?? selected}, PDF p. {excerpt.page}: “{excerpt.quote}”
-                            </small>
-                          ))}
-                          {source.pages.length > 0 && (
-                            <small>
-                              {source.pages
-                                .map((page) => `${source.period_label ?? selected}, PDF p. ${page}`)
-                                .join(' · ')}
-                            </small>
-                          )}
-                        </li>
-                      ))}
-                      {insight.evidence.map((item, evidenceIndex) => (
-                        <li key={`evidence-${evidenceIndex}`}>
-                          <span>
-                            {item.period_label ?? selected}, PDF p. {item.page}: “{item.quote}”
-                          </span>
-                        </li>
-                      ))}
-                    </ul>
-                  </details>
-                </article>
-              ))}
-            </div>
-          )}
-          {sourceDocumentError && <p role="alert">{sourceDocumentError}</p>}
-        </section>
-        )}
-
         {/* Period comparison */}
-        <PeriodComparison summary={summary} />
+        <PeriodComparison summary={summary} selected={selected} />
       </div>
     </div>
   )
