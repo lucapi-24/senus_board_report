@@ -30,9 +30,6 @@ from app.schemas.financial import (
     ItemUpdate,
     KPIResponse,
     FinancialSummary,
-    AIInsight,
-    PeriodCompareRequest,
-    PeriodCompareResponse,
     ValidationResponse,
 )
 from app.services import lifecycle
@@ -253,29 +250,6 @@ async def get_kpis(
     if period is None:
         raise HTTPException(status_code=404, detail=f"Unknown period: {period_label}")
     return _period_kpi_responses(period)
-
-
-@router.get("/insights/{period_label}", response_model=List[AIInsight])
-async def get_ai_insights(
-    period_label: str,
-    force: bool = Query(False),
-    db: AsyncSession = Depends(get_db),
-    user: User = Depends(get_current_user),
-):
-    """Return saved insights; regenerate only when explicitly requested."""
-    from app.services.ai_insights import generate_insights
-    return await generate_insights(period_label, db, force=force)
-
-
-@router.post("/insights/compare", response_model=PeriodCompareResponse)
-async def compare_periods(
-    request: PeriodCompareRequest,
-    db: AsyncSession = Depends(get_db),
-    user: User = Depends(get_current_user),
-):
-    """Compare two periods using AI analysis."""
-    from app.services.ai_insights import compare_periods
-    return await compare_periods(request, db)
 
 
 @router.get("/validations/{period_label}", response_model=List[ValidationResponse])

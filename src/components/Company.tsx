@@ -8,7 +8,7 @@ import {
   type CompanyNarrative,
   type FinancialSummary,
 } from '../api/client'
-import { buildProjection, type Projection } from './projection'
+import { targetSeries, type Projection } from './projection'
 import { CompanyChat, CompanyInsights } from './CompanyAI'
 import './Company.css'
 
@@ -123,14 +123,8 @@ function ObjectiveChart({ p }: { p: Projection }) {
   const last = p.years.length - 1
   const area = `${line(p.target)} L${x(last)} ${y(0)} L${x(0)} ${y(0)} Z`
   const ticks = [0, 0.25, 0.5, 0.75, 1].map((f) => maxValue * f)
-  const series: { values: number[]; kind: 'target' | 'pipeline' | 'estimate' }[] = [
-    { values: p.target, kind: 'target' },
-    ...(p.pipeline ? [{ values: p.pipeline, kind: 'pipeline' as const }] : []),
-    ...(p.base ? [{ values: p.base, kind: 'estimate' as const }] : []),
-  ]
-
   return (
-    <svg className="objective-svg" viewBox={`0 0 ${W} ${H}`} role="img" aria-label="Revenue target versus scenarios">
+    <svg className="objective-svg" viewBox={`0 0 ${W} ${H}`} role="img" aria-label="Revenue target">
       {ticks.map((v) => (
         <g key={v}>
           <line className="grid" x1={left} x2={W - right} y1={y(v)} y2={y(v)} />
@@ -140,17 +134,13 @@ function ObjectiveChart({ p }: { p: Projection }) {
         </g>
       ))}
       <path className="target-area" d={area} />
-      {series.map(({ values, kind }) => (
-        <g key={kind}>
-          <path className={`${kind}-line`} d={line(values)} />
-          {values.map((v, i) => (
-            <circle key={i} className={`${kind}-dot`} cx={x(i)} cy={y(v)} r="3.5" />
-          ))}
-          <text className={`point ${kind}-label`} x={x(last)} y={y(values[last]) - 9} textAnchor="end">
-            {formatCompactEur(values[last])}
-          </text>
-        </g>
+      <path className="target-line" d={line(p.target)} />
+      {p.target.map((v, i) => (
+        <circle key={i} className="target-dot" cx={x(i)} cy={y(v)} r="3.5" />
       ))}
+      <text className="point target-label" x={x(last)} y={y(p.target[last]) - 9} textAnchor="end">
+        {formatCompactEur(p.target[last])}
+      </text>
       {p.years.map((label, i) => (
         <text key={label} className="axis" x={x(i)} y={H - 8} textAnchor="middle">
           {label}
@@ -237,18 +227,7 @@ export function Company({
   const horizon = data.strategy?.period.match(/(\d{4})\D+(\d{4})/)
   const projection: Projection | null =
     typeof baseRevenue === 'number' && cagrPct !== null && horizon
-      ? buildProjection({
-          baseRevenue,
-          firstFy: Number(horizon[1]),
-          lastFy: Number(horizon[2]),
-          targetCagrPct: cagrPct,
-          growthPct: null,
-          currentHalf: null,
-          comparableHalf: null,
-          closedPipeline: null,
-          openPipeline: null,
-          assumptions: { conversionMonths: 12, openProbabilityPct: 0, renews: false },
-        })
+      ? targetSeries(baseRevenue, Number(horizon[1]), Number(horizon[2]), cagrPct)
       : null
   const lastIdx = projection ? projection.target.length - 1 : 0
   const observedGrowth = typeof current?.revenue_yoy_change_pct === 'number' ? current.revenue_yoy_change_pct : null

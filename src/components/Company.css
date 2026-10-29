@@ -281,14 +281,7 @@
   width: 14px;
   height: 0;
   border-top: 3px solid var(--green-600);
-}
-.board .legend i.estimate {
-  border-top: 3px dashed #bf8732;
-}
-.board .legend i.pipeline {
-  border-top: 3px solid var(--green-900);
-}
-.board .objective-content {
+}.board .objective-content {
   display: grid;
   grid-template-columns: minmax(0, 1.7fr) minmax(240px, 1fr);
   gap: 24px;
@@ -316,11 +309,7 @@
 }
 .board .objective-svg .target-label {
   fill: var(--green-800);
-}
-.board .objective-svg .estimate-label {
-  fill: #a06a1c;
-}
-.board .objective-svg .target-area {
+}.board .objective-svg .target-area {
   fill: rgba(44, 138, 102, 0.08);
   stroke: none;
 }
@@ -328,37 +317,11 @@
   fill: none;
   stroke: var(--green-600);
   stroke-width: 2.5;
-}
-.board .objective-svg .estimate-line {
-  fill: none;
-  stroke: #bf8732;
-  stroke-width: 2.5;
-  stroke-dasharray: 6 5;
-}
-.board .objective-svg .target-dot {
+}.board .objective-svg .target-dot {
   fill: var(--white);
   stroke: var(--green-600);
   stroke-width: 2;
-}
-.board .objective-svg .pipeline-line {
-  fill: none;
-  stroke: var(--green-900);
-  stroke-width: 2.5;
-}
-.board .objective-svg .pipeline-dot {
-  fill: var(--white);
-  stroke: var(--green-900);
-  stroke-width: 2;
-}
-.board .objective-svg .pipeline-label {
-  fill: var(--green-900);
-}
-.board .objective-svg .estimate-dot {
-  fill: var(--white);
-  stroke: #bf8732;
-  stroke-width: 2;
-}
-.board .objective-stats {
+}.board .objective-stats {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 10px;
@@ -384,47 +347,7 @@
 }
 .board .objective-stats strong.estimate {
   color: #a06a1c;
-}
-.board .objective-stats strong.pipeline {
-  color: var(--green-900);
-}
-.board .assumptions {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 10px 20px;
-  margin-top: 14px;
-  padding: 10px 14px;
-  border: 1px dashed var(--mint);
-  border-radius: 10px;
-  font-size: 12px;
-  color: var(--muted);
-}
-.board .assumptions p {
-  font-weight: 700;
-  color: var(--green-600);
-  text-transform: uppercase;
-  letter-spacing: 0.1em;
-  font-size: 10px;
-}
-.board .assumptions label {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-.board .assumptions select,
-.board .assumptions input[type='number'] {
-  font: inherit;
-  color: var(--ink);
-  padding: 4px 8px;
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  background: var(--white);
-}
-.board .assumptions input[type='number'] {
-  width: 64px;
-}
-.board .objective-stats small {
+}.board .objective-stats small {
   color: var(--muted);
   font-size: 11px;
   line-height: 1.4;
@@ -469,19 +392,7 @@
   padding: 5px 8px;
   border-radius: 5px;
   white-space: nowrap;
-}
-.board .bd-source {
-  display: inline-block;
-  padding: 0 5px;
-  border-radius: 8px;
-  background: var(--green-100);
-  color: var(--green-800);
-  font-size: 11px;
-  font-weight: 700;
-  cursor: help;
-  vertical-align: middle;
-}
-.board .bd-note {
+}.board .bd-note {
   color: var(--muted);
   font-size: 13px;
   margin-top: 10px;

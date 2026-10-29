@@ -98,54 +98,6 @@ class FinancialSummary(BaseModel):
     revenue_yoy_period_label: Optional[str] = None
 
 
-class InsightEvidence(BaseModel):
-    page: int
-    quote: str
-    period_label: Optional[str] = None
-
-
-class InsightSource(BaseModel):
-    source_id: str
-    claim_text: str
-    label: str
-    value: float
-    origin: str
-    period_label: Optional[str] = None
-    formula: Optional[str] = None
-    pages: List[int] = Field(default_factory=list)
-    pdf_excerpts: List[InsightEvidence] = Field(default_factory=list)
-    source_note: Optional[str] = None
-    verified: bool = True
-
-
-class AIInsight(BaseModel):
-    section: str
-    insight: str
-    data: Optional[str] = None
-    interpretation: Optional[str] = None
-    confidence: float = 0.0
-    verified_claims: int = 0
-    total_claims: int = 0
-    sources: List[InsightSource] = Field(default_factory=list)
-    evidence: List[InsightEvidence] = Field(default_factory=list)
-
-
-class ChatMessage(BaseModel):
-    role: Literal["user", "assistant"]
-    content: str
-
-
-class ChatRequest(BaseModel):
-    message: str
-    period_label: str
-    history: List[ChatMessage] = Field(default_factory=list)
-
-
-class ChatResponse(BaseModel):
-    message: str
-    sources: List[str] = Field(default_factory=list)
-
-
 class ValidationResponse(BaseModel):
     id: int
     rule: str
@@ -156,21 +108,3 @@ class ValidationResponse(BaseModel):
 
     class Config:
         from_attributes = True
-
-
-class PeriodCompareRequest(BaseModel):
-    period_label_a: str
-    period_label_b: str
-
-
-class PeriodCompareResponse(BaseModel):
-    label_a: str
-    label_b: str
-    insight: str
-    confidence: float
-    data: Optional[str] = None
-    interpretation: Optional[str] = None
-    verified_claims: int = 0
-    total_claims: int = 0
-    sources: List[InsightSource] = Field(default_factory=list)
-    evidence: List[InsightEvidence] = Field(default_factory=list)

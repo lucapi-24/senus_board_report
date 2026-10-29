@@ -38,7 +38,7 @@ las entidades financieras y de auditoría se guardan en PostgreSQL
 | PostgreSQL | persistencia configurada en Compose (`docker-compose.yml`) |
 | Alembic | migraciones versionadas (`backend/alembic/`) |
 | pdfplumber y expresiones regulares | lectura de texto del PDF y extracción determinista (`backend/app/services/ingest.py`, `backend/scripts/extract_pdf.py`) |
-| Groq, cliente OpenAI-compatible | segundo extractor e insights opcionales; requieren `GROQ_API_KEY` (`backend/app/core/config.py`, `backend/app/services/llm_extract.py`, `backend/app/services/ai_insights.py`) |
+| Groq, cliente OpenAI-compatible | segundo extractor e insights/chat de Company opcionales; requieren `GROQ_API_KEY` (`backend/app/core/config.py`, `backend/app/services/llm_extract.py`, `backend/app/services/company_ai.py`) |
 | pytest, Vitest, ESLint | pruebas backend, pruebas frontend y lint (`backend/tests/`, `src/api/client.test.ts`, `package.json`) |
 
 La tabla describe el uso observado, no la motivación histórica del autor al elegir
@@ -46,10 +46,9 @@ cada tecnología; esa motivación no está documentada en el código.
 
 El modelo configurado por defecto es `openai/gpt-oss-120b`. La URL base es la API
 OpenAI-compatible de Groq. Sin clave, el parser determinista y la aplicación central
-siguen disponibles; no se puede producir una nueva extracción LLM ni generar
-comparaciones o nuevos insights de IA. Los insights verificados ya persistidos pueden
-seguir disponibles (`backend/app/core/config.py`,
-`backend/app/services/llm_extract.py`, `backend/app/services/ai_insights.py`).
+siguen disponibles; no se puede producir una nueva extracción LLM ni usar los insights
+y el chat de IA de Company, que devuelven 503 (`backend/app/core/config.py`,
+`backend/app/services/llm_extract.py`, `backend/app/services/company_ai.py`).
 
 ## Pantallas y roles
 
@@ -95,7 +94,7 @@ Las entidades SQLAlchemy principales y sus relaciones son
 - `PnLItem`, `BalanceSheetItem` y `CashFlowItem` guardan cifras, origen, página,
   estado de revisión y factores de confianza.
 - `KPI` guarda valor nullable, clase (`reported`, `derived` o `na`), fórmula y nota.
-- `Insight` almacena texto, confianza calculada y JSON con fuentes/evidencia.
+- `Insight` es una tabla heredada de los insights verificados de Financials, ya retirados de la API y la interfaz; se conserva por las migraciones.
 - `Validation` almacena regla, severidad, mensaje, esperado y observado.
 - `User` almacena rol y hash de contraseña; `AuditLog` guarda operaciones y cambios.
 
@@ -243,38 +242,6 @@ incluyendo operating loss y loss for the period. EBITDA es derivado como resulta
 operativo + depreciación. La dirección de otras partidas sigue el valor parseado del
 documento; no se afirma que todos los costes se normalicen automáticamente
 (`backend/scripts/extract_pdf.py`).
-
-## Insights y comparaciones con IA (backend de Financials)
-
-La interfaz de Financials ya no consume estos endpoints (`/api/insights/...`); se mantienen en el backend.
-
-Los insights por periodo solo se generan para documentos publicados, partidas
-confirmadas/corregidas, o el registro parcial FY2025 identificado en los fixtures.
-Cada afirmación numérica requiere un claim estructurado ligado a un `source_id`; el
-backend comprueba el valor contra la cifra/KPI fuente y que los números del texto
-correspondan a claims verificados, con tolerancia de redondeo de media unidad de la
-precisión mostrada. Las citas incluyen partida/KPI y página cuando está disponible.
-Las frases causales solo se aceptan si la frase completa coincide con evidencia
-textual de una página del PDF (`backend/app/services/ai_insights.py`).
-
-La confianza no se toma del modelo: es `claims verificados / claims totales`. Los
-insights aceptados y sus fuentes se guardan en `insights` y se presentan en
-Dashboard por separado como dato e interpretación. La comparación narrativa entre
-dos periodos aplica las mismas comprobaciones de elegibilidad, cifras y evidencia,
-persiste sus fuentes y presenta las citas en la UI. El backend rechaza duraciones
-distintas y no acepta una comparación si no supera la verificación
-(`backend/app/services/ai_insights.py`, `backend/app/models/financial.py`,
-`src/components/Dashboard.tsx`).
-
-La generación de insights y comparaciones envía solo los KPIs disponibles y hasta
-18 líneas fuente en total, no todas las partidas ni páginas completas. Estima el
-tamaño de cada prompt para el log y reserva como máximo 800 tokens para la respuesta;
-solicita `reasoning_effort` `low` al modelo Groq GPT-OSS. Los insights ya persistidos se devuelven sin regenerar;
-el botón de reintento solicita generación explícita. Ante HTTP 413/429 se conserva el
-contenido existente, se informa del límite en la sección de insights y se permite
-reintentar manualmente; un encabezado de espera válido permite un único reintento
-automático (`backend/app/services/ai_insights.py`, `backend/app/api/financial.py`,
-`src/components/Dashboard.tsx`).
 
 ## Demo y datos reproducibles
 

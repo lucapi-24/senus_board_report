@@ -5,7 +5,6 @@ from types import SimpleNamespace
 import pytest
 
 from app.api.financial import _period_kpi_responses
-from app.services.ai_insights import _format_kpi
 from app.services.metrics import kpi_metadata, require_same_period_duration
 
 
@@ -24,8 +23,6 @@ def test_kpi_metadata_reports_origin_and_formula():
     assert "Monthly revenue" in unavailable["note"]
     assert negative_dscr["kind"] == "na"
     assert "operating cash flow is negative" in negative_dscr["note"]
-    assert _format_kpi(None, 1, "%") == "n/d"
-    assert _format_kpi(0, 1, "%") == "0.0%"
 
 
 def test_comparison_rejects_half_year_against_full_year():

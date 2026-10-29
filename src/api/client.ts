@@ -125,51 +125,6 @@ export interface FinancialSummary {
   revenue_yoy_period_label: string | null
 }
 
-export interface AIInsight {
-  section: string
-  insight: string
-  data: string | null
-  interpretation: string | null
-  confidence: number
-  verified_claims: number
-  total_claims: number
-  sources: InsightSource[]
-  evidence: InsightEvidence[]
-}
-
-export interface InsightSource {
-  source_id: string
-  claim_text: string
-  label: string
-  value: number
-  origin: string
-  period_label?: string | null
-  formula: string | null
-  pages: number[]
-  pdf_excerpts: InsightEvidence[]
-  source_note: string | null
-  verified: boolean
-}
-
-export interface InsightEvidence {
-  page: number
-  quote: string
-  period_label?: string | null
-}
-
-export interface PeriodCompareResult {
-  label_a: string
-  label_b: string
-  insight: string
-  confidence: number
-  data: string | null
-  interpretation: string | null
-  verified_claims: number
-  total_claims: number
-  sources: InsightSource[]
-  evidence: InsightEvidence[]
-}
-
 export interface ReconciledItem {
   statement: FinancialStatement
   line_item: string
@@ -445,24 +400,6 @@ export const api = {
   },
   company: (label?: string) =>
     get<CompanyNarrative>(`/api/company${label ? `?period=${encodeURIComponent(label)}` : ''}`),
-  kpis: (label: string) => get<KPIValue[]>(`/api/kpis/${label}`),
-  insights: (label: string, force = false) =>
-    get<AIInsight[]>(`/api/insights/${label}${force ? '?force=true' : ''}`),
-  comparePeriods: async (body: {
-    period_label_a: string
-    period_label_b: string
-  }): Promise<PeriodCompareResult> => {
-    const res = await fetch(`${API_BASE}/api/insights/compare`, {
-      method: 'POST',
-      headers: { ...authHeaders(), 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    })
-    if (!res.ok) {
-      onUnauthorized(res.status)
-      throw new Error(await res.text() || 'Compare failed')
-    }
-    return (await res.json()) as PeriodCompareResult
-  },
   documents: () => get<DocumentSummary[]>('/api/documents'),
   document: (id: number) => get<DocumentDetail>(`/api/documents/${id}`),
   documentPeriods: (id: number) => get<Period[]>(`/api/documents/${id}/periods`),
