@@ -127,7 +127,7 @@ function CustomerCard({ customer }: { customer: CompanyCustomer }) {
       <b>
         {STATUS_LABEL[customer.status] ?? customer.status}
         {money(customer.value_eur) && ` · ${money(customer.value_eur)}`}{' '}
-        <Source page={customer.page} quote={customer.quote} />
+       
       </b>
     </div>
   )
@@ -308,7 +308,7 @@ export function Company({
                 {customersClosed && (
                   <div className="period-chip">
                     {customersClosed.value} enterprise customers{' '}
-                    <Source page={customersClosed.page} quote={customersClosed.quote} />
+                   
                   </div>
                 )}
               </div>
@@ -325,7 +325,7 @@ export function Company({
                         <span>{formatCompactEur(closed.value)}</span>
                         <i className="closed" style={{ height: `${(closed.value / scaleMax) * 100}%` }} />
                         <small>
-                          Closed <Source page={closed.page} quote={closed.quote} />
+                          Closed
                         </small>
                       </div>
                     )}
@@ -334,7 +334,7 @@ export function Company({
                         <span>{formatCompactEur(open.value)}</span>
                         <i className="active" style={{ height: `${(open.value / scaleMax) * 100}%` }} />
                         <small>
-                          Open <Source page={open.page} quote={open.quote} />
+                          Open
                         </small>
                       </div>
                     )}
@@ -402,7 +402,7 @@ export function Company({
                         {p.name}
                       </strong>
                       {p.roles.join(' · ')}
-                      <em>{PEOPLE_GROUP_LABEL[groupOf(p)]}</em> <Source page={p.page} quote={p.quote} />
+                      <em>{PEOPLE_GROUP_LABEL[groupOf(p)]}</em>
                     </p>
                   </div>
                 ))}
@@ -430,7 +430,7 @@ export function Company({
                     </div>
                     <h3>{m.title}</h3>
                     <p>
-                      {m.quote} <Source page={m.page} quote={m.quote} />
+                      {m.quote}
                     </p>
                     <div className="milestone-values">
                       {Object.entries(m.details).map(([k, v]) => (
@@ -452,7 +452,7 @@ export function Company({
                     <p>
                       {data.strategy.min_cagr_pct !== null && `Targeting ≥${data.strategy.min_cagr_pct}% annual compound sales growth`}
                       {data.strategy.ebitda_positive_fy && `, with positive EBITDA expected in ${data.strategy.ebitda_positive_fy}`}
-                      . <Source page={data.strategy.page} quote={data.strategy.paragraphs[0] ?? ''} />
+                      .
                     </p>
                     <div className="strategy-path">
                       <span>{periodLabel}</span>
