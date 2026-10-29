@@ -8,7 +8,7 @@ import {
   type CompanyNarrative,
   type FinancialSummary,
 } from '../api/client'
-import { buildProjection, type Assumptions, type Projection } from './projection'
+import { buildProjection, type Projection } from './projection'
 import './Company.css'
 
 const STATUS_LABEL: Record<string, string> = {
@@ -194,11 +194,6 @@ export function Company({
 }) {
   const [data, setData] = useState<CompanyNarrative | null>(null)
   const [error, setError] = useState('')
-  const [assumptions, setAssumptions] = useState<Assumptions>({
-    conversionMonths: 12,
-    openProbabilityPct: 30,
-    renews: false,
-  })
 
   useEffect(() => {
     let active = true
@@ -247,8 +242,6 @@ export function Company({
   const baseRevenue = fact(data, 'fy25_revenue_eur')
   const cagrPct = data.strategy?.min_cagr_pct ?? null
   const horizon = data.strategy?.period.match(/(\d{4})\D+(\d{4})/)
-  const comparable = summary.find((s) => s.period.label === current?.revenue_yoy_period_label)
-  const sixMonths = current?.duration_months === 6 && comparable?.duration_months === 6
   const projection: Projection | null =
     typeof baseRevenue === 'number' && cagrPct !== null && horizon
       ? buildProjection({
@@ -256,20 +249,16 @@ export function Company({
           firstFy: Number(horizon[1]),
           lastFy: Number(horizon[2]),
           targetCagrPct: cagrPct,
-          growthPct: typeof current?.revenue_yoy_change_pct === 'number' ? current.revenue_yoy_change_pct : null,
-          currentHalf: sixMonths ? current?.revenue ?? null : null,
-          comparableHalf: sixMonths ? comparable?.revenue ?? null : null,
-          closedPipeline: closed?.value ?? null,
-          openPipeline: open?.value ?? null,
-          assumptions,
+          growthPct: null,
+          currentHalf: null,
+          comparableHalf: null,
+          closedPipeline: null,
+          openPipeline: null,
+          assumptions: { conversionMonths: 12, openProbabilityPct: 0, renews: false },
         })
       : null
   const lastIdx = projection ? projection.target.length - 1 : 0
-  const pct = (v: number, of: number) => `${Math.round((v / of) * 100)}%`
-  const requiredCagr =
-    projection?.pipeline && lastIdx > 1
-      ? ((projection.target[lastIdx] / projection.pipeline[1]) ** (1 / (lastIdx - 1)) - 1) * 100
-      : null
+  const observedGrowth = typeof current?.revenue_yoy_change_pct === 'number' ? current.revenue_yoy_change_pct : null
 
   const people = [...data.people].sort(
     (a, b) => PEOPLE_GROUP_ORDER.indexOf(groupOf(a)) - PEOPLE_GROUP_ORDER.indexOf(groupOf(b)),
@@ -386,117 +375,51 @@ export function Company({
             <div className="panel-heading">
               <div>
                 <p className="eyebrow">COMPANY OBJECTIVE</p>
-                <h2>{data.strategy?.name}: revenue target vs. scenarios</h2>
+                <h2>{data.strategy?.name}: revenue target</h2>
               </div>
               <div className="legend">
                 <span>
                   <i className="target" />
                   Target ≥{cagrPct}% CAGR
                 </span>
-                {projection.pipeline && (
-                  <span>
-                    <i className="pipeline" />
-                    With pipeline
-                  </span>
-                )}
-                {projection.base && (
-                  <span>
-                    <i className="estimate" />
-                    Current trend
-                  </span>
-                )}
               </div>
             </div>
             <div className="objective-content">
               <ObjectiveChart p={projection} />
               <div className="objective-stats">
                 <div>
+                  <span>Reported revenue FY25</span>
+                  <strong>{formatCompactEur(baseRevenue as number)}</strong>
+                  <small>starting point of the target</small>
+                </div>
+                <div>
                   <span>Target {projection.years[lastIdx]}</span>
                   <strong>{formatCompactEur(projection.target[lastIdx])}</strong>
                   <small>
-                    from {formatCompactEur(baseRevenue as number)} in FY25 at ≥{cagrPct}% a year
+                    {projection.years[1]}: {formatCompactEur(projection.target[1])}
                   </small>
                 </div>
-                {projection.base && (
+                {observedGrowth !== null && (
                   <div>
-                    <span>Current trend {projection.years[lastIdx]}</span>
-                    <strong className="estimate">{formatCompactEur(projection.base[lastIdx])}</strong>
-                    <small>
-                      {projection.years[1]}E {formatCompactEur(projection.base[1])}
-                      {projection.usesSeasonality ? ', adjusted for first-half seasonality' : ''} (
-                      {pct(projection.base[lastIdx], projection.target[lastIdx])} of target)
-                    </small>
+                    <span>Reported growth {current?.period.label}</span>
+                    <strong className="estimate">
+                      {observedGrowth > 0 ? '+' : ''}
+                      {observedGrowth.toFixed(1)}%
+                    </strong>
+                    <small>vs. {current?.revenue_yoy_period_label}, as reported</small>
                   </div>
                 )}
-                {projection.pipeline && (
-                  <div>
-                    <span>With pipeline {projection.years[lastIdx]}</span>
-                    <strong className="pipeline">{formatCompactEur(projection.pipeline[lastIdx])}</strong>
-                    <small>
-                      {projection.years[1]}E {formatCompactEur(projection.pipeline[1])} (
-                      {pct(projection.pipeline[1], projection.target[1])} of the {projection.years[1]} target)
-                    </small>
-                  </div>
-                )}
-                {requiredCagr !== null && (
-                  <div>
-                    <span>Growth needed from {projection.years[1]}E</span>
-                    <strong>{requiredCagr.toFixed(0)}%</strong>
-                    <small>a year, starting from the with-pipeline estimate</small>
-                  </div>
-                )}
+                <div>
+                  <span>Growth required</span>
+                  <strong>≥{cagrPct}%</strong>
+                  <small>a year, compound</small>
+                </div>
               </div>
             </div>
-            {projection.pipeline && (
-              <div className="assumptions">
-                <p>Assumptions (editable)</p>
-                <label>
-                  Conversion of closed {closed ? formatCompactEur(closed.value) : 'deals'}
-                  <select
-                    value={assumptions.conversionMonths}
-                    onChange={(e) => setAssumptions({ ...assumptions, conversionMonths: Number(e.target.value) })}
-                  >
-                    {[6, 12, 18, 24, 36].map((m) => (
-                      <option key={m} value={m}>
-                        over {m} months
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label>
-                  Chance open {open ? formatCompactEur(open.value) : 'deals'} close
-                  <input
-                    type="number"
-                    min={0}
-                    max={100}
-                    step={5}
-                    value={assumptions.openProbabilityPct}
-                    onChange={(e) =>
-                      setAssumptions({
-                        ...assumptions,
-                        openProbabilityPct: Math.min(100, Math.max(0, Number(e.target.value) || 0)),
-                      })
-                    }
-                  />
-                  %
-                </label>
-                <label className="check">
-                  <input
-                    type="checkbox"
-                    checked={assumptions.renews}
-                    onChange={(e) => setAssumptions({ ...assumptions, renews: e.target.checked })}
-                  />
-                  Contracts renew at the same rate
-                </label>
-              </div>
-            )}
             <p className="bd-note">
-              Target: Senus 2030 (compound sales growth of no less than {cagrPct}%) applied to FY25 revenue. Scenarios
-              are calculated here, not company forecasts. The report gives no recognition timeline or closing odds for
-              the pipeline: closed deals are assumed to bill from January 2026 and open ones from July 2026, both on
-              top of current-trend revenue, so &ldquo;with pipeline&rdquo; is an upper bound if part of the closed
-              value is already in reported revenue. The probability is an illustrative assumption, not data from the
-              report.
+              Target: Senus 2030 (compound sales growth of no less than {cagrPct}%) applied to FY25 revenue. The line
+              is the arithmetic of that target; no forecast is made, since the report does not say when contracted or
+              open pipeline turns into revenue.
             </p>
           </section>
         )}
