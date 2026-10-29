@@ -115,6 +115,66 @@ function niceMax(value: number): number {
   return Math.ceil((value * 1.1) / step) * step
 }
 
+interface Trajectory {
+  years: string[]
+  target: number[]
+  estimate: number[] | null
+  cagr: number
+  growth: number | null
+  halfYearRevenue: number | null
+}
+
+function ObjectiveChart({ t }: { t: Trajectory }) {
+  const W = 640
+  const H = 250
+  const left = 56
+  const right = 56
+  const top = 18
+  const bottom = 30
+  const maxValue = Math.max(...t.target) * 1.08
+  const x = (i: number) => left + (i / (t.years.length - 1)) * (W - left - right)
+  const y = (v: number) => top + (1 - v / maxValue) * (H - top - bottom)
+  const line = (values: number[]) => values.map((v, i) => `${i === 0 ? 'M' : 'L'}${x(i).toFixed(1)} ${y(v).toFixed(1)}`).join(' ')
+  const last = t.years.length - 1
+  const area = `${line(t.target)} L${x(last)} ${y(0)} L${x(0)} ${y(0)} Z`
+  const ticks = [0, 0.25, 0.5, 0.75, 1].map((f) => maxValue * f)
+
+  return (
+    <svg className="objective-svg" viewBox={`0 0 ${W} ${H}`} role="img" aria-label="Revenue target versus estimate">
+      {ticks.map((v) => (
+        <g key={v}>
+          <line className="grid" x1={left} x2={W - right} y1={y(v)} y2={y(v)} />
+          <text className="axis" x={left - 8} y={y(v) + 3} textAnchor="end">
+            {formatCompactEur(v)}
+          </text>
+        </g>
+      ))}
+      <path className="target-area" d={area} />
+      <path className="target-line" d={line(t.target)} />
+      {t.estimate && <path className="estimate-line" d={line(t.estimate)} />}
+      {t.target.map((v, i) => (
+        <circle key={`t${i}`} className="target-dot" cx={x(i)} cy={y(v)} r="3.5" />
+      ))}
+      {t.estimate?.map((v, i) => (
+        <circle key={`e${i}`} className="estimate-dot" cx={x(i)} cy={y(v)} r="3.5" />
+      ))}
+      <text className="point target-label" x={x(last)} y={y(t.target[last]) - 9} textAnchor="end">
+        {formatCompactEur(t.target[last])}
+      </text>
+      {t.estimate && (
+        <text className="point estimate-label" x={x(last)} y={y(t.estimate[last]) - 9} textAnchor="end">
+          {formatCompactEur(t.estimate[last])}
+        </text>
+      )}
+      {t.years.map((label, i) => (
+        <text key={label} className="axis" x={x(i)} y={H - 8} textAnchor="middle">
+          {label}
+        </text>
+      ))}
+    </svg>
+  )
+}
+
 function CustomerCard({ customer }: { customer: CompanyCustomer }) {
   const meta = [customer.segment, customer.country, customer.product].filter(Boolean).join(' · ')
   return (
@@ -186,6 +246,31 @@ export function Company({
   const totalPipeline = closed && open ? closed.value + open.value : null
   const closedShare = totalPipeline && closed ? Math.round((closed.value / totalPipeline) * 100) : null
   const scaleMax = closed && open ? niceMax(Math.max(closed.value, open.value)) : 0
+
+  const baseRevenue = fact(data, 'fy25_revenue_eur')
+  const cagrPct = data.strategy?.min_cagr_pct ?? null
+  const horizon = data.strategy?.period.match(/(\d{4})\D+(\d{4})/)
+  let trajectory: Trajectory | null = null
+  if (typeof baseRevenue === 'number' && cagrPct !== null && horizon) {
+    const first = Number(horizon[1])
+    const last = Number(horizon[2])
+    const growth = typeof current?.revenue_yoy_change_pct === 'number' ? current.revenue_yoy_change_pct : null
+    const steps = last - first + 1
+    trajectory = {
+      years: ['FY25', ...Array.from({ length: steps }, (_, i) => `FY${String(first + i).slice(2)}`)],
+      target: Array.from({ length: steps + 1 }, (_, i) => baseRevenue * (1 + cagrPct / 100) ** i),
+      estimate:
+        growth === null ? null : Array.from({ length: steps + 1 }, (_, i) => baseRevenue * (1 + growth / 100) ** i),
+      cagr: cagrPct,
+      growth,
+      halfYearRevenue: typeof current?.revenue === 'number' ? current.revenue : null,
+    }
+  }
+  const trajectoryEnd = trajectory ? trajectory.target.length - 1 : 0
+  const requiredCagr =
+    trajectory?.estimate && trajectoryEnd > 1
+      ? ((trajectory.target[trajectoryEnd] / trajectory.estimate[1]) ** (1 / (trajectoryEnd - 1)) - 1) * 100
+      : null
 
   const people = [...data.people].sort(
     (a, b) => PEOPLE_GROUP_ORDER.indexOf(groupOf(a)) - PEOPLE_GROUP_ORDER.indexOf(groupOf(b)),
@@ -295,6 +380,74 @@ export function Company({
               </div>
             </MetricCard>
           </div>
+        )}
+
+        {trajectory && (
+          <section className="bd-panel objective-panel">
+            <div className="panel-heading">
+              <div>
+                <p className="eyebrow">COMPANY OBJECTIVE</p>
+                <h2>
+                  {data.strategy?.name}: revenue target vs. estimate
+                </h2>
+              </div>
+              <div className="legend">
+                <span>
+                  <i className="target" />
+                  Target ≥{trajectory.cagr}% CAGR
+                </span>
+                {trajectory.estimate && (
+                  <span>
+                    <i className="estimate" />
+                    Estimate at {trajectory.growth !== null && trajectory.growth > 0 ? '+' : ''}
+                    {trajectory.growth?.toFixed(1)}% growth
+                  </span>
+                )}
+              </div>
+            </div>
+            <div className="objective-content">
+              <ObjectiveChart t={trajectory} />
+              <div className="objective-stats">
+                <div>
+                  <span>Target {trajectory.years[trajectoryEnd]}</span>
+                  <strong>{formatCompactEur(trajectory.target[trajectoryEnd])}</strong>
+                  <small>
+                    from {formatCompactEur(baseRevenue as number)} in FY25 at ≥{trajectory.cagr}% a year
+                  </small>
+                </div>
+                {trajectory.estimate && (
+                  <div>
+                    <span>Estimate {trajectory.years[trajectoryEnd]}</span>
+                    <strong className="estimate">{formatCompactEur(trajectory.estimate[trajectoryEnd])}</strong>
+                    <small>
+                      keeping the current {trajectory.growth?.toFixed(1)}% year-on-year growth (
+                      {Math.round((trajectory.estimate[trajectoryEnd] / trajectory.target[trajectoryEnd]) * 100)}% of target)
+                    </small>
+                  </div>
+                )}
+                {requiredCagr !== null && (
+                  <div>
+                    <span>Growth needed from {trajectory.years[1]}E</span>
+                    <strong>{requiredCagr.toFixed(0)}%</strong>
+                    <small>a year to still reach the {trajectory.years[trajectoryEnd]} target</small>
+                  </div>
+                )}
+                {trajectory.halfYearRevenue !== null && (
+                  <div>
+                    <span>{current?.period.label} vs {trajectory.years[1]} target</span>
+                    <strong>{Math.round((trajectory.halfYearRevenue / trajectory.target[1]) * 100)}%</strong>
+                    <small>
+                      {formatCompactEur(trajectory.halfYearRevenue)} of {formatCompactEur(trajectory.target[1])} in the first half
+                    </small>
+                  </div>
+                )}
+              </div>
+            </div>
+            <p className="bd-note">
+              Target: Senus 2030 strategy (annual compound sales growth of no less than {trajectory.cagr}%) applied to
+              FY25 revenue. The estimate is calculated here from reported figures and is not a company forecast.
+            </p>
+          </section>
         )}
 
         <div className="dashboard-grid">

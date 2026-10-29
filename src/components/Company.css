@@ -259,6 +259,127 @@
   white-space: nowrap;
 }
 
+/* Objective */
+.board .objective-panel {
+  margin-bottom: 12px;
+}
+.board .legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  color: var(--muted);
+  font-size: 12px;
+  padding-top: 4px;
+}
+.board .legend span {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+.board .legend i {
+  width: 14px;
+  height: 0;
+  border-top: 3px solid var(--green-600);
+}
+.board .legend i.estimate {
+  border-top: 3px dashed #bf8732;
+}
+.board .objective-content {
+  display: grid;
+  grid-template-columns: minmax(0, 1.7fr) minmax(240px, 1fr);
+  gap: 24px;
+  align-items: center;
+  margin-top: 12px;
+}
+.board .objective-svg {
+  width: 100%;
+  height: auto;
+  overflow: visible;
+}
+.board .objective-svg .grid {
+  stroke: #e5e9e7;
+  stroke-width: 1;
+  stroke-dasharray: 3 4;
+}
+.board .objective-svg .axis {
+  fill: var(--muted);
+  font-size: 10px;
+  stroke: none;
+}
+.board .objective-svg .point {
+  font: 700 11px 'DM Sans', sans-serif;
+  stroke: none;
+}
+.board .objective-svg .target-label {
+  fill: var(--green-800);
+}
+.board .objective-svg .estimate-label {
+  fill: #a06a1c;
+}
+.board .objective-svg .target-area {
+  fill: rgba(44, 138, 102, 0.08);
+  stroke: none;
+}
+.board .objective-svg .target-line {
+  fill: none;
+  stroke: var(--green-600);
+  stroke-width: 2.5;
+}
+.board .objective-svg .estimate-line {
+  fill: none;
+  stroke: #bf8732;
+  stroke-width: 2.5;
+  stroke-dasharray: 6 5;
+}
+.board .objective-svg .target-dot {
+  fill: var(--white);
+  stroke: var(--green-600);
+  stroke-width: 2;
+}
+.board .objective-svg .estimate-dot {
+  fill: var(--white);
+  stroke: #bf8732;
+  stroke-width: 2;
+}
+.board .objective-stats {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+.board .objective-stats > div {
+  padding: 12px 14px;
+  border-radius: 10px;
+  background: #f1f7f4;
+}
+.board .objective-stats span,
+.board .objective-stats strong,
+.board .objective-stats small {
+  display: block;
+}
+.board .objective-stats span {
+  color: var(--muted);
+  font-size: 11px;
+}
+.board .objective-stats strong {
+  font: 700 24px 'Manrope', sans-serif;
+  letter-spacing: -0.03em;
+  margin: 3px 0;
+}
+.board .objective-stats strong.estimate {
+  color: #a06a1c;
+}
+.board .objective-stats small {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.4;
+}
+@media (max-width: 900px) {
+  .board .objective-content {
+    grid-template-columns: 1fr;
+  }
+}
+
 /* Grid */
 .board .dashboard-grid {
   display: grid;
