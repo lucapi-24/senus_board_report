@@ -1,3 +1,5 @@
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@600;700;800&display=swap');
+
 .co-hero__lead {
   margin: 8px 0 0;
   max-width: 62ch;
@@ -315,4 +317,244 @@
 .co-people li span:not(.co-source) {
   color: var(--senus-text-muted);
   font-size: 0.78rem;
+}
+
+/* ---- Otros aesthetic (scoped to the Company view) ---- */
+.company {
+  --ink: #14231e;
+  --muted: #6f7c77;
+  --line: #e5eae7;
+  --canvas: #f4f6f4;
+  --green-900: #113f32;
+  --green-800: #17634b;
+  --green-600: #2c8a66;
+  --green-100: #e8f3ee;
+  --mint: #a6d2bd;
+  --sand: #f0f3ed;
+  --co-shadow: 0 1px 2px rgba(20, 35, 30, 0.04), 0 6px 22px rgba(20, 35, 30, 0.045);
+
+  background: var(--canvas);
+  color: var(--ink);
+  font-family: 'DM Sans', sans-serif;
+  min-height: 100%;
+}
+.company h1,
+.company h3,
+.company h4,
+.company .kpi-card__value,
+.company .co-pipeline__figure strong,
+.company .co-strategy__path strong {
+  font-family: 'Manrope', sans-serif;
+  letter-spacing: -0.03em;
+}
+
+/* Heading: white page header with eyebrow instead of dark hero */
+.company .dashboard__hero {
+  background: transparent;
+  color: var(--ink);
+  padding: 28px 0 0;
+  border: 0;
+}
+.company .dashboard__eyebrow {
+  color: var(--green-600);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.13em;
+}
+.company .dashboard__title {
+  color: var(--ink);
+  font-size: 28px;
+}
+.company .co-hero__lead {
+  color: var(--muted);
+  font-size: 13px;
+}
+.company .co-hero__meta {
+  padding-left: 14px;
+  border-left: 2px solid var(--green-600);
+  align-items: flex-start;
+  text-align: left;
+  color: var(--muted);
+  font-size: 11px;
+}
+.company .co-hero__meta strong {
+  color: var(--ink);
+  font-size: 13px;
+}
+
+/* Cards */
+.company .panel,
+.company .kpi-card {
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  box-shadow: var(--co-shadow);
+}
+.company .kpi-card:hover {
+  transform: none;
+  box-shadow: var(--co-shadow);
+}
+.company .kpi-grid {
+  gap: 14px;
+}
+.company .kpi-card__label {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+}
+.company .kpi-card__icon,
+.company .kpi-card--green .kpi-card__icon,
+.company .kpi-card--peach .kpi-card__icon {
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  background: var(--green-100);
+  color: var(--green-800);
+}
+.company .kpi-card__value {
+  font-size: 26px;
+  font-weight: 700;
+}
+.company .kpi-card__trend.is-up {
+  color: var(--green-600);
+}
+
+.company .panel__head {
+  border-bottom: 0;
+  margin-bottom: 12px;
+}
+.company .panel__head h3 {
+  font-size: 16px;
+  color: var(--ink);
+}
+.company .panel__head h3::before {
+  content: 'SENUS PLC';
+  display: block;
+  margin-bottom: 3px;
+  color: var(--green-600);
+  font: 700 10px 'DM Sans', sans-serif;
+  letter-spacing: 0.13em;
+}
+.company .panel__hint {
+  padding: 5px 9px;
+  border-radius: 6px;
+  background: var(--sand);
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 700;
+}
+
+/* Pipeline */
+.company .co-pipeline__figure {
+  border: 0;
+  border-radius: 10px;
+  background: #f1f7f4;
+}
+.company .co-pipeline__figure strong {
+  color: var(--green-800);
+  font-size: 28px;
+}
+.company .co-pipeline__figure--open strong {
+  color: var(--green-600);
+}
+.company .co-bar {
+  height: 10px;
+  border-radius: 5px;
+  background: var(--mint);
+  overflow: visible;
+}
+.company .co-bar i {
+  background: var(--green-800);
+  border-radius: 5px 0 0 5px;
+}
+.company .co-bar span {
+  padding: 16px 0 0;
+  color: var(--muted);
+  text-shadow: none;
+  font-size: 10px;
+}
+
+/* Customers */
+.company .co-customer__avatar {
+  border-radius: 9px;
+  background: var(--green-100);
+  color: var(--green-800);
+}
+.company .co-customer__body strong {
+  font-size: 13px;
+}
+.company .co-customer {
+  border-color: var(--line);
+}
+
+/* Pills and chips */
+.company .co-pill {
+  background: var(--sand);
+  color: #52645d;
+  font-size: 10px;
+}
+.company .co-pill--secured,
+.company .co-pill--expanded,
+.company .co-pill--integrated,
+.company .co-pill--completed {
+  background: var(--green-100);
+  color: var(--green-800);
+}
+.company .co-pill--plan {
+  background: #f7eedb;
+  color: #86621f;
+}
+.company .co-source {
+  background: var(--green-100);
+  color: var(--green-800);
+}
+
+/* Drivers as insight cards */
+.company .co-drivers li {
+  padding: 10px 12px;
+  border: 1px solid #edf0ee;
+  border-radius: 8px;
+  background: #f7f9f7;
+}
+.company .co-topic {
+  background: var(--green-900);
+  color: #fff;
+  border-radius: 6px;
+}
+
+/* Milestones */
+.company .co-milestones article {
+  border-radius: 9px;
+  background: #fbfcfb;
+  border-color: var(--line);
+}
+.company .co-milestone__n {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 7px;
+  background: var(--green-900);
+  color: #fff;
+  font-size: 10px;
+}
+.company .co-milestones dt,
+.company .co-facts dt {
+  color: var(--muted);
+}
+
+/* Strategy path */
+.company .co-strategy__path div {
+  background: var(--green-900);
+  border-radius: 10px;
+}
+.company .co-strategy__path strong {
+  color: #89c9a8;
+}
+
+/* Facts */
+.company .co-facts div + div {
+  padding-top: 8px;
+  border-top: 1px solid var(--line);
 }
