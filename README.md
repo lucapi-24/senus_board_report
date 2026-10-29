@@ -56,9 +56,17 @@ seguir disponibles (`backend/app/core/config.py`,
 - **Login:** autentica mediante `/api/auth/login`; las contraseñas se almacenan con
   bcrypt y la API devuelve tokens JWT (`src/components/Login.tsx`,
   `backend/app/api/auth.py`, `backend/app/core/security.py`).
-- **Overview:** muestra KPI, origen/fórmula o nota de disponibilidad, gráficos de
-  ingresos y márgenes, desglose de costes, puente EBITDA–cash flow, ratios, insights
-  y comparación entre periodos (`src/components/Dashboard.tsx`).
+- **Company (vista por defecto):** informe de dirección: métricas, objetivo Senus 2030,
+  pipeline, clientes, personas, hitos, 3 insights con IA y chat con IA
+  (`src/components/Company.tsx`, `src/components/CompanyAI.tsx`).
+- **Financials (Dashboard):** muestra KPI, origen/fórmula o nota de disponibilidad,
+  gráficos de ingresos y márgenes, desglose de costes, puente EBITDA–cash flow, ratios
+  y comparación entre periodos. Ya no muestra insights de IA ni la nota "How to read
+  these ratios" (`src/components/Dashboard.tsx`).
+- **Comparación de periodos:** el periodo seleccionado en la cabecera es uno de los
+  dos; solo se elige con cuál compararlo. El orden siempre es cronológico (el más
+  antiguo es la base, el más reciente va después) en tabla, puente y gráficas
+  (`src/components/PeriodComparison.tsx`).
 - **Documents:** lista documentos; permite a `admin` cargar PDFs, confirmar fechas,
   procesar columnas, revisar y corregir cifras, publicar y eliminar documentos.
   Incluye procedencia y ordenación por confianza de extracción
@@ -164,6 +172,25 @@ estrategia Senus 2030 y personas. Todo sale del PDF original, sin datos externos
 - `backend/scripts/compare_narrative_to_txt.py` compara la extracción con el TXT de
   referencia (`Otros/`); `tests/test_narrative.py` exige ≥99 % de cobertura.
 - Tras actualizar: `python -m alembic upgrade head` y reprocesar el PDF desde Documents.
+- La gráfica de objetivo solo dibuja la aritmética del objetivo (≥50 % anual sobre los
+  ingresos FY25, `strategy.min_cagr_pct`); no hay previsión, porque el informe no dice
+  cuándo el pipeline se convierte en ingresos.
+- Los datos sin fuente en el PDF (precio de acción, CEO, ingresos por línea de producto)
+  no se muestran.
+
+### Insights y chat con IA (Company)
+
+Son texto generado, no citas del PDF, y la vista lo indica. Requieren `GROQ_API_KEY`
+en `backend/.env`; sin clave devuelven 503 y el resto de la vista sigue funcionando.
+
+- `GET /api/company/insights?period=&force=` devuelve 3 interpretaciones (título + texto);
+  se cachean en memoria del proceso y `force=true` las regenera.
+- `POST /api/company/chat` responde preguntas con el historial reciente (máx. 8 turnos).
+- El contexto es la narrativa extraída (sin citas ni páginas), las notas de `checks` y
+  las partidas de los estados financieros del periodo; el prompt prohíbe inventar cifras,
+  previsiones o probabilidades y sumar importes que `checks` marca como solapados
+  (`backend/app/services/company_ai.py`, `backend/app/api/company.py`,
+  `backend/tests/test_company_ai.py`).
 
 ## Datos, orígenes y KPIs
 
@@ -217,7 +244,9 @@ operativo + depreciación. La dirección de otras partidas sigue el valor parsea
 documento; no se afirma que todos los costes se normalicen automáticamente
 (`backend/scripts/extract_pdf.py`).
 
-## Insights y comparaciones con IA
+## Insights y comparaciones con IA (backend de Financials)
+
+La interfaz de Financials ya no consume estos endpoints (`/api/insights/...`); se mantienen en el backend.
 
 Los insights por periodo solo se generan para documentos publicados, partidas
 confirmadas/corregidas, o el registro parcial FY2025 identificado en los fixtures.
@@ -309,7 +338,3 @@ de validación en vivo a Groq; los tests del proveedor usan respuestas simuladas
 
 
 ### Dónde corregí a la IA
-
-### Insights y chat con IA (Company)
-
-GET /api/company/insights devuelve 3 interpretaciones generadas con IA (Groq, GROQ_API_KEY en ackend/.env) y POST /api/company/chat responde preguntas usando solo el contenido extraído del PDF (narrativa + estados financieros). Son textos generados, no citas; la vista lo indica.
