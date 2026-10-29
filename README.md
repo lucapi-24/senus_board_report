@@ -148,6 +148,23 @@ el factor de coincidencia falla; las identidades sin datos suficientes no cuenta
 La pantalla permite ordenar por las cifras menos fiables
 (`backend/app/services/reconciliation.py`, `src/components/Ingestion.tsx`).
 
+## Vista Company y extracción narrativa
+
+La vista por defecto (**Company**) muestra dirección, clientes, hitos, pipeline,
+estrategia Senus 2030 y personas. Todo sale del PDF original, sin datos externos:
+
+- `backend/app/services/narrative.py` extrae de forma determinista (sin LLM) el perfil,
+  highlights, clientes, hitos, drivers y notas. Cada dato lleva la **página** y la
+  **cita literal**; un dato cuya cita no aparece en esa página se descarta.
+- Se guarda en `documents.narrative_json` (migración `e1f4a7c9d2b3`) durante la ingesta
+  y se sirve en `GET /api/company?period=`. Si falta, se extrae al vuelo desde el PDF.
+  Los datos sembrados sin PDF devuelven 404.
+- `checks` contiene cruces entre cifras de la narrativa (p. ej. los ≈€425k de
+  Nov–Dec deben caber en los ≈€700k cerrados en el periodo).
+- `backend/scripts/compare_narrative_to_txt.py` compara la extracción con el TXT de
+  referencia (`Otros/`); `tests/test_narrative.py` exige ≥99 % de cobertura.
+- Tras actualizar: `python -m alembic upgrade head` y reprocesar el PDF desde Documents.
+
 ## Datos, orígenes y KPIs
 
 Cada cifra/KPI se clasifica como:

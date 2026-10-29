@@ -471,7 +471,29 @@ def extract_narrative(pages: List[Page]) -> Dict[str, Any]:
         },
         "notes": _notes(blocks),
     }
+    result["checks"] = _consistency_checks(result["commercial"]["aggregates"])
     return result
+
+
+def _consistency_checks(aggregates: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Cross-check narrative figures that must agree with each other."""
+    checks: List[Dict[str, Any]] = []
+    closed = aggregates.get("closed_pipeline_eur")
+    recent = aggregates.get("recent_deals_value_eur")
+    if closed and recent:
+        ok = recent["value"] <= closed["value"]
+        checks.append(
+            {
+                "rule": "recent_deals_within_closed_pipeline",
+                "status": "ok" if ok else "warning",
+                "message": (
+                    f"Deals closed in Nov–Dec (≈€{recent['value']:,.0f}, p.{recent['page']}) "
+                    f"{'are within' if ok else 'exceed'} the pipeline closed in the period "
+                    f"(≈€{closed['value']:,.0f}, p.{closed['page']})."
+                ),
+            }
+        )
+    return checks
 
 
 def _notes(blocks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
