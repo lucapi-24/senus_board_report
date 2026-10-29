@@ -1,0 +1,63 @@
+IDEAS PARA EL VÍDEO - Senus PLC Board Report
+=============================================
+
+DURACIÓN SUGERIDA: 4-6 minutos
+
+1. GANCHO (0:00-0:20)
+   - El problema: un board report en PDF son +50 páginas; encontrar la dirección
+     de la empresa y los números clave lleva tiempo y es fácil equivocarse.
+   - La propuesta: subes el PDF y obtienes un informe de consejo navegable,
+     con cada cifra trazada a su origen.
+
+2. VISIÓN GENERAL / ARQUITECTURA (0:20-0:50)
+   - React + Vite + TypeScript (frontend), FastAPI + SQLAlchemy + Alembic (backend),
+     PostgreSQL, todo con Docker Compose.
+   - Pipeline: PDF -> extracción -> validación/conciliación -> base de datos -> API -> UI.
+   - Groq (LLM) solo para insights y chat de la vista Company.
+
+3. INGESTA DEL PDF (0:50-1:40)
+   - Subida del documento y revisión de lo extraído.
+   - Extracción de P&L, balance y cash flow + narrativa (clientes, hitos, consejo).
+   - Controles de coherencia: cuadre de totales, cruce con notas, conciliación entre periodos.
+   - Idea clave: lo que no tiene fuente en el PDF no se muestra.
+
+4. VISTA COMPANY (1:40-3:10)  <- el plato fuerte
+   - Dirección de la empresa: Board & Management, clientes y partners, pipeline comercial,
+     strategic milestones.
+   - Gráfica del objetivo: CAGR >= 50% sobre ingresos FY25 (EUR 836.991) hasta EUR 6,36M en FY30.
+     Comentar por qué NO hay proyección: decisión consciente de mostrar solo datos verificables.
+   - 3 insights generados con IA (no citas del texto) y notas de coherencia.
+   - Chat con IA: preguntar algo real, p. ej. "¿Qué riesgos hay en la deuda?" o
+     "¿Cómo se compara el crecimiento reportado con el objetivo?".
+     (Aviso: las respuestas tardan ~30 s; mejor acortar en edición.)
+
+5. VISTA FINANCIALS (3:10-4:10)
+   - KPIs, P&L, balance, cash flow por periodo.
+   - Compare periods: eliges solo con qué periodo comparar; el seleccionado es la referencia
+     y la comparación siempre va hacia delante en el tiempo (pasado -> futuro).
+   - Waterfall del resultado operativo.
+
+6. CALIDAD Y DECISIONES (4:10-4:50)
+   - Tests: backend (pytest) y frontend (vitest), validación y conciliación.
+   - Limpieza: se eliminó código no usado (~2.900 líneas) y la IA de Financials.
+   - Autenticación con login y seguridad básica.
+
+7. CIERRE (4:50-5:20)
+   - Aprendizajes: datos verificables > estimaciones bonitas; la IA como apoyo, no como fuente.
+   - Próximos pasos: más informes/periodos, deduplicar clientes e hitos, revisar discrepancia de deuda.
+   - Llamada a la acción: repositorio / README.
+
+CONSEJOS DE GRABACIÓN
+---------------------
+- Prepara la sesión antes: login (board@senus.com), datos cargados, insights ya generados (cache).
+- Pregunta del chat ensayada para evitar esperas; corta la espera en edición.
+- Zoom del navegador al 110-125% para que se lea bien.
+- Muestra primero Company (la historia) y luego Financials (la evidencia).
+- Evita enseñar claves (.env) en pantalla.
+- Cierra con un resumen en una frase: "Del PDF al informe de consejo, sin inventar nada."
+
+PUNTOS CRÍTICOS A MENCIONAR HONESTAMENTE
+----------------------------------------
+- La gráfica de objetivo es aritmética, no una predicción.
+- Hay una discrepancia pendiente en la deuda (EUR 463,6k en la UI vs EUR 76,5k en la maqueta).
+- First Milk/Biochar aparecen tanto en clientes como en hitos.

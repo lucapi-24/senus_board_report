@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
+import { orderChronologically } from './comparisonOrder'
 import {
   ResponsiveContainer,
   BarChart,
@@ -86,11 +87,7 @@ export function PeriodComparison({
   const selectedPeriod = summary.find((s) => s.period.label === selected) ?? null
   const picked = summary.find((s) => s.period.label === otherPick) ?? null
   // Comparisons always read forward in time: the earlier period is the base.
-  const pickedIsLater = Boolean(
-    selectedPeriod && picked && picked.period.end_date >= selectedPeriod.period.end_date,
-  )
-  const base = pickedIsLater ? selectedPeriod : picked
-  const other = pickedIsLater ? picked : selectedPeriod
+  const { base, other } = orderChronologically(selectedPeriod, picked)
   const baseLabel = base?.period.label ?? ''
   const otherLabel = other?.period.label ?? ''
   const comparing = Boolean(base && other && baseLabel !== otherLabel)
