@@ -346,6 +346,66 @@ export interface DetectedPeriod {
   duration_months?: number | null
 }
 
+export interface Sourced<T> {
+  value: T
+  page: number
+  quote: string
+}
+
+export interface SourcedFact {
+  page: number
+  quote: string
+}
+
+export interface CompanyPerson extends SourcedFact {
+  name: string
+  title: string
+  roles: string[]
+  groups: string[]
+}
+
+export interface CompanyCustomer extends SourcedFact {
+  name: string
+  status: string
+  segment?: string
+  country?: string
+  product?: string
+  detail?: string
+  value_eur?: number | null
+  unnamed?: boolean
+}
+
+export interface CompanyMilestone extends SourcedFact {
+  key: string
+  title: string
+  type: string
+  status: string
+  details: Record<string, string | number>
+}
+
+export interface CompanyNarrative {
+  document: { id: number; filename: string; status: string; period_label: string | null }
+  company: Record<string, Sourced<string | number | string[]>>
+  people: CompanyPerson[]
+  highlights: { text: string; page: number }[]
+  commercial: {
+    aggregates: Record<string, Sourced<number>>
+    customers: CompanyCustomer[]
+  }
+  milestones: CompanyMilestone[]
+  strategy: {
+    name: string
+    page: number
+    period: string
+    min_cagr_pct: number | null
+    ebitda_positive_fy: string | null
+    paragraphs: string[]
+  } | null
+  drivers: (SourcedFact & { topic: string; text: string })[]
+  sections: Record<string, { page: number; paragraphs: string[]; bullets: string[] }>
+  notes: { number: number; title: string; page: number; paragraphs: string[] }[]
+}
+
 export const api = {
   login: async (email: string, password: string): Promise<{ access_token: string; role: string; email: string }> => {
     const body = new URLSearchParams({ username: email, password })
@@ -361,6 +421,8 @@ export const api = {
   periods: () => get<Period[]>('/api/periods'),
   summary: () => get<FinancialSummary[]>('/api/summary'),
   periodDetail: (label: string) => get<PeriodDetail>(`/api/periods/${label}`),
+  company: (label?: string) =>
+    get<CompanyNarrative>(`/api/company${label ? `?period=${encodeURIComponent(label)}` : ''}`),
   kpis: (label: string) => get<KPIValue[]>(`/api/kpis/${label}`),
   insights: (label: string, force = false) =>
     get<AIInsight[]>(`/api/insights/${label}${force ? '?force=true' : ''}`),

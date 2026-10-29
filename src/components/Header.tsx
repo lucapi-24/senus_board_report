@@ -15,8 +15,8 @@ interface HeaderProps {
   periods?: HeaderPeriod[]
   selected?: string
   onSelect?: (label: string) => void
-  view?: 'overview' | 'documents'
-  onNavigate?: (view: 'overview' | 'documents') => void
+  view?: 'company' | 'overview' | 'documents'
+  onNavigate?: (view: 'company' | 'overview' | 'documents') => void
   flaggedCount?: number
 }
 
@@ -105,7 +105,7 @@ export function Header({
   periods = [],
   selected,
   onSelect,
-  view = 'overview',
+  view = 'company',
   onNavigate,
   flaggedCount,
 }: HeaderProps) {
@@ -122,10 +122,17 @@ export function Header({
         <nav className="senus-header__nav" aria-label="Main">
           <button
             type="button"
+            className={`senus-header__link ${view === 'company' ? 'senus-header__link--active' : ''}`}
+            onClick={() => onNavigate?.('company')}
+          >
+            Company
+          </button>
+          <button
+            type="button"
             className={`senus-header__link ${view === 'overview' ? 'senus-header__link--active' : ''}`}
             onClick={() => onNavigate?.('overview')}
           >
-            Overview
+            Financials
           </button>
           <button
             type="button"

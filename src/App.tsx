@@ -11,16 +11,17 @@ import {
   type FinancialSummary,
 } from './api/client'
 import { Header } from './components/Header'
+import { Company } from './components/Company'
 import { Dashboard } from './components/Dashboard'
 import { Ingestion } from './components/Ingestion'
 import { Footer } from './components/Footer'
 import { Login } from './components/Login'
 
-type View = 'overview' | 'documents'
+type View = 'company' | 'overview' | 'documents'
 
 function App() {
   const [user, setUser] = useState<AuthUser | null>(() => getStoredUser())
-  const [view, setView] = useState<View>('overview')
+  const [view, setView] = useState<View>('company')
   const [summary, setSummary] = useState<FinancialSummary[]>([])
   const [selected, setSelected] = useState('')
   const [loading, setLoading] = useState(true)
@@ -100,7 +101,7 @@ function App() {
         selected={selected}
         onSelect={(label) => {
           setSelected(label)
-          setView('overview')
+          setView(view === 'documents' ? 'company' : view)
         }}
         view={view}
         onNavigate={setView}
@@ -120,8 +121,10 @@ function App() {
             <code>{error}</code>
             <p className="state__hint">Ensure the API is running at http://localhost:8000.</p>
           </div>
-        ) : (
+        ) : view === 'overview' ? (
           <Dashboard key={selected} summary={summary} selected={selected} />
+        ) : (
+          <Company key={selected} summary={summary} selected={selected} />
         )}
       </main>
       <Footer />
