@@ -80,13 +80,20 @@ export function PeriodComparison({
   summary: FinancialSummary[]
   selected: string
 }) {
-  const baseLabel = selected
-  const [otherLabel, setOtherLabel] = useState('')
+  const [otherPick, setOtherPick] = useState('')
   const [details, setDetails] = useState<{ base: PeriodDetail; other: PeriodDetail } | null>(null)
 
-  const base = summary.find((s) => s.period.label === baseLabel) ?? null
-  const other = summary.find((s) => s.period.label === otherLabel) ?? null
-  const comparing = Boolean(base && other && base.period.label !== other.period.label)
+  const selectedPeriod = summary.find((s) => s.period.label === selected) ?? null
+  const picked = summary.find((s) => s.period.label === otherPick) ?? null
+  // Comparisons always read forward in time: the earlier period is the base.
+  const pickedIsLater = Boolean(
+    selectedPeriod && picked && picked.period.end_date >= selectedPeriod.period.end_date,
+  )
+  const base = pickedIsLater ? selectedPeriod : picked
+  const other = pickedIsLater ? picked : selectedPeriod
+  const baseLabel = base?.period.label ?? ''
+  const otherLabel = other?.period.label ?? ''
+  const comparing = Boolean(base && other && baseLabel !== otherLabel)
 
   useEffect(() => {
     if (!comparing) return
@@ -182,14 +189,14 @@ export function PeriodComparison({
       <div className="compare__form">
         <PeriodSelect
           id="compare-other"
-          label={`Compare ${baseLabel} with`}
-          value={otherLabel}
-          options={summary.filter((s) => s.period.label !== baseLabel)}
-          onChange={setOtherLabel}
+          label={`Compare ${selected} with`}
+          value={otherPick}
+          options={summary.filter((s) => s.period.label !== selected)}
+          onChange={setOtherPick}
         />
       </div>
 
-      {!comparing && <div className="panel__empty">Choose a period to compare it with {baseLabel}.</div>}
+      {!comparing && <div className="panel__empty">Choose a period to compare it with {selected}.</div>}
 
       {comparing && base && other && (
         <>
