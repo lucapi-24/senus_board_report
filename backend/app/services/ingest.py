@@ -12,6 +12,7 @@ stores the LLM's value in ``original_value`` so a human can adjudicate.
 from __future__ import annotations
 
 import json
+import logging
 from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any, Dict, List, Tuple
@@ -38,10 +39,13 @@ from app.services.llm_extract import (
     select_statement_pages,
 )
 from app.services.metrics import CATALOG_BY_KEY, kpi_metadata
+from app.services.narrative import extract_narrative
 from app.services.note_crosscheck import find_note_mismatches
 from app.services.period_detector import get_column_for_period, period_duration_months
 from app.services.reconciliation import canonical_label, reconcile, review_status_for
 from app.services.validation import validate_period
+
+logger = logging.getLogger(__name__)
 
 ITEM_MODEL = {
     "pnl": PnLItem,
@@ -498,6 +502,12 @@ async def ingest_document(
             period_end=use_end,
         )
         proposal["subtotal_warnings"] = subtotal_warnings
+        # Narrative is complementary: a failure here must not discard the financial extraction.
+        try:
+            doc.narrative_json = json.dumps(extract_narrative(pages), ensure_ascii=False)
+        except Exception:
+            logger.exception("Narrative extraction failed for document %s", doc.id)
+            doc.narrative_json = None
         await _persist(
             db,
             doc,

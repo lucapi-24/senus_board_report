@@ -42,6 +42,7 @@ class Document(Base):
     extracted_at = Column(DateTime(timezone=True), nullable=True)
     raw_json = Column(Text, nullable=True)                  # JSON string of extracted data
     periods_detected_json = Column(Text, nullable=True)     # JSON: auto-detected periods from document headers
+    narrative_json = Column(Text, nullable=True)            # JSON: company profile, people, customers, milestones… from the prose
     periods_manually_edited = Column(Boolean, nullable=False, server_default="false")  # True if user changed dates/label
     edited_by = Column(String(255), nullable=True)          # Email of user who last edited period dates/label
     edited_at = Column(DateTime(timezone=True), nullable=True)  # When period dates/label were last manually edited
