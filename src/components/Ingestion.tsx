@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Check, FileUp } from 'lucide-react'
+import { Check, FileUp, Loader2 } from 'lucide-react'
 import {
   api,
   formatEur,
@@ -74,6 +74,8 @@ export function Ingestion({ role, onDataChanged }: { role?: string; onDataChange
   const [periods, setPeriods] = useState<Period[]>([])
   const [docPeriods, setDocPeriods] = useState<Map<number, Period[]>>(new Map())
   const [busy, setBusy] = useState('')
+  const [processingId, setProcessingId] = useState<number | null>(null)
+  const [elapsed, setElapsed] = useState(0)
   const [error, setError] = useState('')
   const [sortByConfidence, setSortByConfidence] = useState(false)
 
@@ -166,8 +168,16 @@ export function Ingestion({ role, onDataChanged }: { role?: string; onDataChange
       await openDocument(created.id)
     })
 
-  const handleProcess = (id: number) =>
-    run('process', async () => {
+  useEffect(() => {
+    if (processingId === null) return
+    const timer = window.setInterval(() => setElapsed((s) => s + 1), 1000)
+    return () => window.clearInterval(timer)
+  }, [processingId])
+
+  const handleProcess = (id: number) => {
+    setProcessingId(id)
+    setElapsed(0)
+    return run('process', async () => {
       try {
         await api.processDocument(id)
       } catch (error) {
@@ -181,7 +191,8 @@ export function Ingestion({ role, onDataChanged }: { role?: string; onDataChange
       await loadDocuments()
       await openDocument(id)
       onDataChanged?.()
-    })
+    }).finally(() => setProcessingId(null))
+  }
 
   const handleItem = (item: MergedItem, action: 'confirm' | 'correct') =>
     run(`${action}-${item.line_item}`, async () => {
@@ -334,6 +345,15 @@ export function Ingestion({ role, onDataChanged }: { role?: string; onDataChange
       <div className="container">
         {error && <div className="state state--error ingest__error">{error}</div>}
 
+        {processingId !== null && (
+          <div className="callout callout--info processing-banner" role="status" aria-live="polite">
+            <Loader2 size={18} className="spin" aria-hidden="true" />
+            <span>
+              Processing document… extracting figures and running checks. This can take a few
+              minutes — please keep this page open. ({elapsed}s)
+            </span>
+          </div>
+        )}
         {!isAdmin && (
           <div className="callout callout--readonly">
             Read-only view - your account has viewer access. Sign in as an administrator to upload,
@@ -451,7 +471,13 @@ export function Ingestion({ role, onDataChanged }: { role?: string; onDataChange
                                 disabled={busy === 'process'}
                                 onClick={() => handleProcess(doc.id)}
                               >
-                                Process
+                                {processingId === doc.id ? (
+                                  <>
+                                    <Loader2 size={14} className="spin" aria-hidden="true" /> Processing…
+                                  </>
+                                ) : (
+                                  'Process'
+                                )}
                               </button>
                             ) : (
                               <span className="muted small">Confirm periods before processing</span>

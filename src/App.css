@@ -949,6 +949,18 @@
   animation: spin 1s linear infinite;
 }
 
+.processing-banner {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+}
+
+.btn .spin {
+  vertical-align: -2px;
+  margin-right: 0.25rem;
+}
+
 @keyframes spin {
   to {
     transform: rotate(360deg);

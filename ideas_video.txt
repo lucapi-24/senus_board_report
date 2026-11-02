@@ -4,57 +4,48 @@ VIDEO IDEAS - Senus PLC Board Report
 SUGGESTED LENGTH: 4-6 minutes, in English
 
 1. HOOK (0:00-0:20)
-   - The problem: a board report PDF is dozens of pages; finding the company's direction
-     and the key numbers takes time and mistakes are easy.
-   - The idea: upload the PDF and get a navigable board report where every figure is
-     traced back to its source.
+   - The problem: financial information is locked inside long PDFs and is hard to review and compare.
+   - The product: an end-to-end workflow from source document to reviewable financial dashboard.
 
-2. OVERVIEW / ARCHITECTURE (0:20-0:50)
-   - Frontend: React + Vite + TypeScript.
-   - Backend: FastAPI + SQLAlchemy + Alembic, PostgreSQL, all running with Docker Compose.
-   - Pipeline: PDF -> extraction -> validation/reconciliation -> database -> API -> UI.
-   - An LLM (Groq) is used only for the Company insights and the chat.
+2. PRODUCT OVERVIEW (0:20-0:50)
+   - Three areas: Documents, Financials and Company.
+   - Admins upload, review and publish; viewers explore published results.
+   - Brief architecture: React + TypeScript, FastAPI, PostgreSQL and Docker Compose.
 
-3. PDF INGESTION (0:50-1:40)
-   - Upload the document and review what was extracted.
-   - Extraction of P&L, balance sheet and cash flow, plus the narrative
-     (clients, milestones, board and management).
-   - Consistency checks: totals add up, cross-checks against notes, reconciliation between periods.
-   - Key principle: anything without a source in the PDF is not shown.
+3. DOCUMENT WORKFLOW (0:50-2:00)
+   - Upload a PDF, detect reporting periods and confirm dates before processing.
+   - Extract P&L, balance sheet, cash flow and relevant narrative.
+   - Deterministic parser plus optional AI-assisted extraction; compare results and flag disagreements.
+   - Source page references, confidence factors, review/correction and publish flow.
+   - Accounting checks expose discrepancies; missing data is not silently invented.
 
-4. COMPANY VIEW (1:40-3:10)  <- the highlight
-   - Company direction: Board & Management, Customers & Partners, commercial pipeline,
-     strategic milestones.
-   - Objective chart: at least 50% CAGR on FY25 revenue (EUR 836,991) up to EUR 6.36M in FY30.
-     Explain why there is NO forecast: a deliberate choice to show only verifiable data.
-   - Three AI-generated insights (not quotes from the text) and consistency notes.
-   - AI chat: ask something real, e.g. "What are the main risks around the balance sheet?" or
-     "How does the reported growth compare with the target?"
-     (Note: answers take ~30 s; trim the wait when editing.)
+4. FINANCIALS (2:00-3:20)
+   - KPIs and financial statements with reported, derived and unavailable values identified.
+   - Formulas and source provenance help explain where figures come from.
+   - Period comparisons always run chronologically; warn when durations differ.
+   - Waterfall explains the change in operating result.
 
-5. FINANCIALS VIEW (3:10-4:10)
-   - KPIs, P&L, balance sheet and cash flow per period.
-   - Compare periods: you only choose what to compare with; the selected period is the reference,
-     and comparisons always run forward in time (past -> future).
-   - Operating result waterfall.
+5. COMPANY AND AI (3:20-3:55)
+   - Briefly show customers, milestones and management as narrative extracted from the report.
+   - Insights and chat are AI-generated interpretations, not quotations or financial sources.
+   - Senus is the sample report, not the main subject of the presentation.
 
-6. QUALITY AND DECISIONS (4:10-4:50)
-   - Tests: backend (pytest) and frontend (vitest), plus validation and reconciliation checks.
-   - Cleanup: ~2,900 lines of unused code removed, AI removed from Financials.
-   - Login and basic security.
+6. ENGINEERING AND RELIABILITY (3:55-4:30)
+   - Backend (pytest) and frontend (vitest) tests.
+   - Deterministic calculations, validation, reconciliation, login and role-based access.
+   - AI is optional and kept out of the financial calculation path.
 
-7. WRAP-UP (4:50-5:20)
-   - Lessons learned: verifiable data beats nice-looking estimates; AI is a helper, not a source.
-   - Next steps: more reports and periods, deduplicate customers vs. milestones.
+7. WRAP-UP (4:30-4:50)
+   - Design principle: preserve sources, show calculations, flag uncertainty, leave gaps visible.
    - Call to action: repository / README.
-   - One-line summary: "From the PDF to the board report, without making anything up."
+   - One-line summary: "From the PDF to a report you can inspect and use."
 
 RECORDING TIPS
 --------------
 - Prepare the session beforehand: log in (board@senus.com), data loaded, insights already generated (cached).
 - Rehearse the chat question to avoid dead time; cut the wait in editing.
 - Browser zoom at 110-125% so text is readable.
-- Show Company first (the story), then Financials (the evidence).
+- Show Documents first (the workflow), then Financials (the analysis), and use Company as a brief example.
 - Never show the .env file or API keys on screen.
 
 POINTS TO MENTION HONESTLY
@@ -63,3 +54,87 @@ POINTS TO MENTION HONESTLY
 - "Total creditors" (EUR 463.6k) is the sum of short- and long-term creditors; the report's
   "bank debt" of EUR 76.5k corresponds to creditors due after more than one year only.
 - First Milk / Biochar appear both under customers and under milestones.
+
+
+FULL VIDEO SCRIPT
+-----------------
+(Approx. four to five minutes at a natural speaking pace. Text in square brackets is a
+visual cue and is not spoken.)
+
+[Start on the application’s Documents page.]
+
+I built this application to solve a practical problem: important financial
+information is locked inside long PDF reports, and turning it into something
+people can review and compare takes time. The goal is not just to display a
+dashboard. It is to make the journey from source document to decision-ready
+information visible and reviewable.
+
+[Show the navigation, then the Documents page.]
+
+The application has three main areas. Documents is where an administrator
+uploads a report and reviews its processing. Financials turns the confirmed
+figures into KPIs and comparisons. Company brings together the report’s
+narrative, such as customers, milestones and management. A viewer can explore
+the published information, while uploading, correcting and publishing are
+reserved for an administrator.
+
+[Demonstrate selecting a PDF and document type, then show the detected periods.]
+
+After upload, the system reads the PDF and looks for financial statements,
+reporting dates and periods. Before extraction can continue, the administrator
+confirms the period dates. This matters because a comparison is only meaningful
+when the reporting periods have been identified correctly. If the headings or
+dates do not agree, the workflow asks for review instead of quietly guessing.
+
+[Show a flagged item, its source details, and the confirm or correct controls.]
+
+For the figures, I use a deterministic parser and, when configured, a second
+AI-assisted extractor. The application compares their results and retains
+source details, including page references. When the extractors disagree, that
+difference is flagged for review: it is not silently resolved by the AI.
+An administrator can inspect the item, confirm it, or enter a correction.
+Confidence factors also help bring less reliable items to the top of the review
+list.
+
+The system then runs accounting checks, such as whether revenue less cost of
+sales matches gross profit, and whether the cash movement reconciles. If a
+required value is missing, the check is not treated as proof that the numbers
+are correct. The idea is to expose the evidence and the exceptions so a person
+can decide what to publish.
+
+[Move to Financials and select a KPI, then show the comparison controls.]
+
+In Financials, reported values are distinguished from figures calculated by
+the application. A derived KPI includes its formula, and unavailable data is
+shown as unavailable instead of being replaced with zero or an invented
+estimate. The dashboard also brings together the profit and loss, balance
+sheet and cash flow, with charts to make trends and cost structure easier to
+read.
+
+For comparisons, I wanted the time direction to stay consistent. You choose
+another period, and the application orders the pair chronologically, so the
+earlier period is always the baseline. It shows changes in key metrics and a
+waterfall that explains how reported line items contribute to the movement in
+operating result. When the periods have different lengths, the interface warns
+that the comparison is not like-for-like.
+
+[Briefly show Company, an insight disclaimer, and the AI chat.]
+
+Company is a good example of how narrative can sit alongside financial
+evidence. Here, Senus is the sample report, but the important part is the
+workflow: the narrative is extracted from the source, while AI insights and
+chat are clearly labelled as interpretations rather than quotations. The
+financial dashboard does not depend on AI-generated answers.
+
+[Show the test folders or a final application screen.]
+
+Behind the interface, the frontend uses React and TypeScript, and the API uses
+FastAPI with a PostgreSQL database. The services run together with Docker
+Compose. I added backend and frontend tests, and treated validation,
+reconciliation, authentication and role-based access as part of the product,
+not as afterthoughts.
+
+The key design choice throughout was to make uncertainty visible: keep the
+source, show what is calculated, flag disagreements, and leave missing
+information missing. That is what turns a PDF into a report people can
+actually inspect and use.
