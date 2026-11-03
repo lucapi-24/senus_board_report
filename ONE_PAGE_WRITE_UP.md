@@ -21,7 +21,7 @@ LLM. PostgreSQL stores the relational records; Alembic migrations evolve the sch
 Docker packages the frontend and API, while Docker Compose describes the local
 frontend, API, and PostgreSQL services. The deployed application is hosted on Google
 Cloud Platform and can be accessed at
-[http://34.56.190.78:8080/](http://34.56.190.78:8080/). The repository does not
+[http://34.55.228.63:8080/](http://34.55.228.63:8080/). The repository does not
 identify the specific GCP compute, networking, or database products behind that
 address, so no more specific production topology is claimed here.
 
