@@ -1,261 +1,303 @@
 # Senus PLC Board Report
 
-Aplicación web para cargar informes financieros de Senus PLC, detectar y revisar
-periodos y cifras, calcular KPIs deterministas y consultar un dashboard. El flujo
-está pensado para usuarios con rol `admin` (ingesta y revisión) y `viewer` (consulta).
-El repositorio no acredita que exista un despliegue productivo ni cuál sea el estado
-de una base de datos externa.
+## Run with Docker
 
-## Arquitectura observada
+From the repository root, make sure Docker Desktop is running. On a clean checkout,
+create the backend environment file and the two external Docker volumes required by
+Compose:
+
+```powershell
+if (-not (Test-Path backend\.env)) {
+  Copy-Item backend\.env.example backend\.env
+}
+docker volume create senus_plc_board_postgres_data
+docker volume create senus_plc_board_uploads
+```
+
+Build and start the application:
+
+```powershell
+docker compose up --build
+```
+
+Open the app at [http://localhost:8080](http://localhost:8080). The API documentation
+is available at [http://localhost:8000/docs](http://localhost:8000/docs). Stop the
+containers with `Ctrl+C`, or run `docker compose down` from another terminal. The
+database and uploaded files are stored in Docker volumes and persist when the
+containers are stopped.
+
+The Groq integration is optional. The copied `.env.example` contains a placeholder
+value: replace it with a valid `GROQ_API_KEY` to enable AI extraction, insights, and
+chat, or set `GROQ_API_KEY=` to leave the integration disabled. The deterministic
+parser and the rest of the application work without a key.
+
+## Overview
+
+This web application uploads Senus PLC financial reports, detects and reviews
+periods and figures, calculates deterministic KPIs, and displays a dashboard. The
+workflow is designed for users with the `admin` role (ingestion and review) and the
+`viewer` role (read-only access). Run it locally with Docker as described above.
+
+For a concise design rationale covering the technology choices, database model,
+ingestion workflow, and remaining gaps, see the
+[one-page design write-up](ONE_PAGE_WRITE_UP.md).
+
+## Observed architecture
 
 ```mermaid
 flowchart LR
-    U[Usuario] --> B[Navegador]
+    U[User] --> B[Browser]
     B --> FE[React + TypeScript]
     FE -->|HTTP /api| N[Nginx]
     N --> API[FastAPI + Uvicorn]
     API --> ORM[SQLAlchemy async]
     ORM --> DB[(PostgreSQL)]
-    API --> UP[(Archivos PDF cargados)]
+    API --> UP[(Uploaded PDF files)]
     API --> PDF[pdfplumber]
-    API -. opcional .-> GROQ[Groq API OpenAI-compatible<br/>openai/gpt-oss-120b]
+    API -. optional .-> GROQ[Groq API OpenAI-compatible<br/>openai/gpt-oss-120b]
 ```
 
-En Compose hay servicios para PostgreSQL 16, la API y el frontend. El contenedor del
-frontend sirve el build de Vite con Nginx y reenvía `/api/` a FastAPI. Alembic ejecuta
-las migraciones antes de iniciar Uvicorn. Los PDFs cargados se guardan como archivos;
-las entidades financieras y de auditoría se guardan en PostgreSQL
-(`docker-compose.yml`, `Dockerfile`, `backend/Dockerfile`, `nginx.conf`,
-`backend/app/main.py`).
+Compose defines services for PostgreSQL 16, the API, and the frontend. The frontend
+container serves the Vite build with Nginx and forwards `/api/` requests to FastAPI.
+Alembic runs database migrations before Uvicorn starts. Uploaded PDFs are stored as
+files; financial and audit records are stored in PostgreSQL (`docker-compose.yml`,
+`Dockerfile`, `backend/Dockerfile`, `nginx.conf`, `backend/app/main.py`).
 
-| Tecnología | Uso comprobable en el repositorio |
+| Technology | Verified use in this repository |
 |---|---|
-| React 19 y TypeScript | SPA, pantallas y contratos del cliente HTTP (`src/`) |
-| Vite | desarrollo y build del frontend (`package.json`, `vite.config.ts`) |
-| Recharts | gráficos del Dashboard (`src/components/Dashboard.tsx`) |
-| FastAPI y Pydantic | API REST, validación de esquemas y documentación OpenAPI (`backend/app/`) |
-| SQLAlchemy async y asyncpg | acceso asíncrono al modelo relacional (`backend/app/core/database.py`) |
-| PostgreSQL | persistencia configurada en Compose (`docker-compose.yml`) |
-| Alembic | migraciones versionadas (`backend/alembic/`) |
-| pdfplumber y expresiones regulares | lectura de texto del PDF y extracción determinista (`backend/app/services/ingest.py`, `backend/scripts/extract_pdf.py`) |
-| Groq, cliente OpenAI-compatible | segundo extractor e insights/chat de Company opcionales; requieren `GROQ_API_KEY` (`backend/app/core/config.py`, `backend/app/services/llm_extract.py`, `backend/app/services/company_ai.py`) |
-| pytest, Vitest, ESLint | pruebas backend, pruebas frontend y lint (`backend/tests/`, `src/api/client.test.ts`, `package.json`) |
+| React 19 and TypeScript | SPA, screens, and HTTP client contracts (`src/`) |
+| Vite | Frontend development and build (`package.json`, `vite.config.ts`) |
+| Recharts | Dashboard charts (`src/components/Dashboard.tsx`) |
+| FastAPI and Pydantic | REST API, schema validation, and OpenAPI documentation (`backend/app/`) |
+| SQLAlchemy async and asyncpg | Asynchronous access to the relational model (`backend/app/core/database.py`) |
+| PostgreSQL | Persistence configured in Compose (`docker-compose.yml`) |
+| Alembic | Versioned migrations (`backend/alembic/`) |
+| pdfplumber and regular expressions | PDF text reading and deterministic extraction (`backend/app/services/ingest.py`, `backend/scripts/extract_pdf.py`) |
+| Groq, OpenAI-compatible client | Optional second extractor and Company insights/chat; requires `GROQ_API_KEY` (`backend/app/core/config.py`, `backend/app/services/llm_extract.py`, `backend/app/services/company_ai.py`) |
+| pytest, Vitest, ESLint | Backend tests, frontend tests, and lint (`backend/tests/`, `src/api/client.test.ts`, `package.json`) |
 
-La tabla describe el uso observado, no la motivación histórica del autor al elegir
-cada tecnología; esa motivación no está documentada en el código.
+The table describes observed usage. The design write-up explains the practical role
+of these choices in the implemented system.
 
-El modelo configurado por defecto es `openai/gpt-oss-120b`. La URL base es la API
-OpenAI-compatible de Groq. Sin clave, el parser determinista y la aplicación central
-siguen disponibles; no se puede producir una nueva extracción LLM ni usar los insights
-y el chat de IA de Company, que devuelven 503 (`backend/app/core/config.py`,
+The default model is `openai/gpt-oss-120b`. The base URL is Groq's
+OpenAI-compatible API. Without an API key, the deterministic parser and core
+application remain available, but new LLM extractions and Company AI insights/chat
+are unavailable and return 503 (`backend/app/core/config.py`,
 `backend/app/services/llm_extract.py`, `backend/app/services/company_ai.py`).
 
-## Pantallas y roles
+## Screens and roles
 
-- **Login:** autentica mediante `/api/auth/login`; las contraseñas se almacenan con
-  bcrypt y la API devuelve tokens JWT (`src/components/Login.tsx`,
+- **Login:** authenticates through `/api/auth/login`; passwords are stored with
+  bcrypt and the API returns JWT tokens (`src/components/Login.tsx`,
   `backend/app/api/auth.py`, `backend/app/core/security.py`).
-- **Company (vista por defecto):** informe de dirección: métricas, objetivo Senus 2030,
-  pipeline, clientes, personas, hitos, 3 insights con IA y chat con IA
+- **Company (default view):** management report with metrics, the Senus 2030 target,
+  pipeline, customers, people, milestones, three AI insights, and AI chat
   (`src/components/Company.tsx`, `src/components/CompanyAI.tsx`).
-- **Financials (Dashboard):** muestra KPI, origen/fórmula o nota de disponibilidad,
-  gráficos de ingresos y márgenes, desglose de costes, puente EBITDA–cash flow, ratios
-  y comparación entre periodos. Ya no muestra insights de IA ni la nota "How to read
-  these ratios" (`src/components/Dashboard.tsx`).
-- **Comparación de periodos:** el periodo seleccionado en la cabecera es uno de los
-  dos; solo se elige con cuál compararlo. El orden siempre es cronológico (el más
-  antiguo es la base, el más reciente va después) en tabla, puente y gráficas
-  (`src/components/PeriodComparison.tsx`).
-- **Documents:** lista documentos; permite a `admin` cargar PDFs, confirmar fechas,
-  procesar columnas, revisar y corregir cifras, publicar y eliminar documentos.
-  Incluye procedencia y ordenación por confianza de extracción
-  (`src/components/Ingestion.tsx`, `backend/app/api/documents.py`).
-- **Selector de periodo:** está en la cabecera global, no dentro del Dashboard
+- **Financials (Dashboard):** displays KPIs, their source/formula or availability
+  note, revenue and margin charts, cost breakdown, EBITDA-to-cash-flow bridge,
+  ratios, and period comparisons. It no longer displays AI insights or the
+  "How to read these ratios" note (`src/components/Dashboard.tsx`).
+- **Period comparison:** the period selected in the header is one of the two periods;
+  the user only selects which period to compare it with. The order is always
+  chronological (older period first, newer period second) in the table, bridge, and
+  charts (`src/components/PeriodComparison.tsx`).
+- **Documents:** lists documents; admins can upload PDFs, confirm dates, process
+  columns, review and correct figures, publish, and delete documents. Includes
+  provenance and sorting by extraction confidence (`src/components/Ingestion.tsx`,
+  `backend/app/api/documents.py`).
+- **Period selector:** appears in the global header, not inside the Dashboard
   (`src/components/Header.tsx`, `src/App.tsx`).
-- **Permisos:** `viewer` consulta; las operaciones de escritura requieren `admin`
-  en el backend. No hay un selector de audiencia ni permisos por audiencia
+- **Permissions:** viewers can read; write operations require the `admin` role in the
+  backend. There is no audience selector or audience-based permission system
   (`backend/app/core/security.py`, `backend/app/api/`).
 
-El Dashboard agrupa ratios de rentabilidad, caja/liquidez, solvencia y retornos.
-Incluye Revenue, Gross Margin, Operating Margin, Cash y Cash Runway como tarjetas,
-además de comparativas gráficas y datos de origen. MoM, ingresos por canal y bookings
-se presentan como no disponibles en vez de estimarse (`src/components/Dashboard.tsx`,
+The Dashboard groups profitability, cash/liquidity, solvency, and return ratios. It
+includes Revenue, Gross Margin, Operating Margin, Cash, and Cash Runway cards, as
+well as chart comparisons and source data. MoM, revenue by channel, and bookings are
+shown as unavailable rather than estimated (`src/components/Dashboard.tsx`,
 `backend/app/services/metrics.py`).
 
-## Modelo de datos
+## Data model
 
-Las entidades SQLAlchemy principales y sus relaciones son
-(`backend/app/models/financial.py`):
+The main SQLAlchemy entities and their relationships are defined in
+`backend/app/models/financial.py`:
 
-- `Document` contiene metadatos, ruta del PDF, estado, periodos detectados y payload
-  de revisión. Puede tener varios `Period`.
-- `Period` contiene fechas, etiqueta y documento de origen; agrupa partidas P&L,
-  balance, cash flow, KPIs, insights y validaciones.
-- `PnLItem`, `BalanceSheetItem` y `CashFlowItem` guardan cifras, origen, página,
-  estado de revisión y factores de confianza.
-- `KPI` guarda valor nullable, clase (`reported`, `derived` o `na`), fórmula y nota.
-- `Insight` es una tabla heredada de los insights verificados de Financials, ya retirados de la API y la interfaz; se conserva por las migraciones.
-- `Validation` almacena regla, severidad, mensaje, esperado y observado.
-- `User` almacena rol y hash de contraseña; `AuditLog` guarda operaciones y cambios.
+- `Document` contains metadata, the PDF path, status, detected periods, and review
+  payload. It can have multiple `Period` records.
+- `Period` contains dates, a label, and its source document; it groups P&L, balance
+  sheet, cash flow, KPI, insight, and validation records.
+- `PnLItem`, `BalanceSheetItem`, and `CashFlowItem` store figures, source, page,
+  review status, and confidence factors.
+- `KPI` stores a nullable value, class (`reported`, `derived`, or `na`), formula, and
+  note.
+- `Insight` is a legacy table for verified Financials insights, which have been
+  removed from the API and interface; it remains because of the migrations.
+- `Validation` stores the rule, severity, message, expected value, and observed value.
+- `User` stores the role and password hash; `AuditLog` records operations and changes.
 
-## Ingesta de PDF y confirmación de periodos
+## PDF ingestion and period confirmation
 
-1. **Carga y lectura:** solo se aceptan archivos `.pdf`. `pdfplumber` extrae texto
-   página a página; en esta ruta no hay OCR (`backend/app/api/documents.py`,
+1. **Upload and reading:** only `.pdf` files are accepted. `pdfplumber` extracts text
+   page by page; this workflow does not use OCR (`backend/app/api/documents.py`,
    `backend/app/services/ingest.py`).
-2. **Detección de fechas y columnas:** `period_detector.py` busca cabeceras de estados
-   financieros y fechas mediante expresiones regulares. La etiqueta se deriva de
-   inicio y fin; por ejemplo, FY2025 corresponde a 1 jul 2024–30 jun 2025 y HY2026
-   a 1 jul 2025–31 dic 2025. El año fiscal termina el 30 de junio. Las cabeceras
-   ambiguas como “Current period” y “Prior period” quedan sin fechas y requieren
-   entrada manual.
-   No se usa un LLM para validar o inventar fechas; el detector y las reglas de
-   coherencia son deterministas (`backend/app/services/period_detector.py`).
-3. **Confirmación antes de extraer cifras:** la UI muestra columnas, fechas y errores.
-   No se procesa hasta confirmar todos los periodos sin errores. La etiqueta se
-   vuelve a calcular al cambiar fechas. Los cambios manuales guardan usuario,
-   fecha/hora y valores anteriores/nuevos en `audit_log`
+2. **Date and column detection:** `period_detector.py` searches financial statement
+   headers and dates using regular expressions. The label is derived from the start
+   and end dates; for example, FY2025 runs from 1 Jul 2024 to 30 Jun 2025, and HY2026
+   runs from 1 Jul 2025 to 31 Dec 2025. The fiscal year ends on 30 June. Ambiguous
+   headers such as "Current period" and "Prior period" are left without dates and
+   require manual input. An LLM is not used to validate or invent dates; the detector
+   and consistency rules are deterministic (`backend/app/services/period_detector.py`).
+3. **Confirmation before extracting figures:** the UI displays columns, dates, and
+   errors. Processing cannot start until every period has been confirmed without
+   errors. The label is recalculated when dates change. Manual changes record the
+   user, timestamp, and previous/new values in `audit_log`
    (`backend/app/api/documents.py`, `backend/app/schemas/documents.py`).
-4. **Coherencia temporal:** se comprueba que las columnas detectadas tengan igual
-   duración; si hay dos columnas, que el comparativo esté exactamente 12 meses antes;
-   y que los encabezados detectados de P&L, balance y cash flow coincidan. Si falla,
-   el documento queda sin confirmar y el procesamiento se bloquea
+4. **Temporal consistency:** detected columns must have the same duration; if there
+   are two columns, the comparative period must be exactly 12 months earlier; and
+   detected P&L, balance sheet, and cash flow headers must match. If a check fails,
+   the document remains unconfirmed and processing is blocked
    (`backend/app/services/period_detector.py`, `backend/app/api/documents.py`).
-5. **Extracción doble:** el parser regex extrae la columna seleccionada y conserva
-   procedencia por página. Si hay `GROQ_API_KEY`, el extractor LLM devuelve partidas
-   estructuradas con página y texto de origen; cada cifra debe aparecer en el texto
-   de la página citada (`backend/scripts/extract_pdf.py`,
+5. **Dual extraction:** the regex parser extracts the selected column and preserves
+   page-level provenance. If `GROQ_API_KEY` is set, the LLM extractor returns
+   structured line items with page and source text; each figure must appear in the
+   cited page's text (`backend/scripts/extract_pdf.py`,
    `backend/app/services/llm_extract.py`).
-6. **Reconciliación y revisión:** cuando ambos extractores discrepan, prevalece el
-   parser determinista; el valor alternativo queda guardado y la partida se marca
-   para revisión. Los valores sin acuerdo no se corrigen silenciosamente.
-   `admin` puede confirmar o corregirlos; publicar actualiza el ciclo de vida del
-   documento (`backend/app/services/reconciliation.py`,
-   `backend/app/services/lifecycle.py`, `backend/app/services/ingest.py`).
-7. **KPIs y validaciones:** tras extraer o corregir, el backend recalcula KPIs y
-   comprobaciones contables con código Python (`backend/app/services/deterministic.py`,
-   `backend/app/services/validation.py`).
+6. **Reconciliation and review:** when the extractors disagree, the deterministic
+   parser takes precedence; the alternative value is retained and the line item is
+   flagged for review. Disagreements are not silently corrected. An admin can confirm
+   or correct figures; publishing updates the document lifecycle
+   (`backend/app/services/reconciliation.py`, `backend/app/services/lifecycle.py`,
+   `backend/app/services/ingest.py`).
+7. **KPIs and validations:** after extraction or correction, the backend recalculates
+   KPIs and accounting checks using Python code
+   (`backend/app/services/deterministic.py`, `backend/app/services/validation.py`).
 
-   La precedencia del parser hace reproducible la selección inicial y deja la salida
-   del LLM como evidencia alternativa para revisión; no implica que el parser sea
-   infalible. Los KPIs se calculan con fórmulas Python para que el resultado no dependa
-   de una respuesta de texto del modelo y pueda cubrirse con tests
-   (`backend/app/services/reconciliation.py`, `backend/scripts/extract_pdf.py`,
-   `backend/tests/test_kpis.py`).
+Parser precedence makes the initial selection reproducible and leaves LLM output as
+alternative evidence for review; it does not mean that the parser is infallible.
+KPIs are calculated with Python formulas so results do not depend on a model's text
+response and can be covered by tests (`backend/app/services/reconciliation.py`,
+`backend/scripts/extract_pdf.py`, `backend/tests/test_kpis.py`).
 
-   Si el procesamiento va a sustituir periodos ya existentes, el backend devuelve un
-   conflicto y la UI pide confirmación antes de reintentar. La decisión y los periodos
-   sustituidos quedan en el log de proceso (`backend/app/api/documents.py`,
-   `src/components/Ingestion.tsx`).
+If processing would replace existing periods, the backend returns a conflict and the
+UI asks for confirmation before retrying. The decision and replaced periods are
+recorded in the processing log (`backend/app/api/documents.py`,
+`src/components/Ingestion.tsx`).
 
-La confianza por partida es la media simple de las comprobaciones aplicables:
-coincidencia exacta entre extractores, presencia de la cifra en el texto de la página
-y comprobaciones de identidades contables relacionadas. Si no hay segundo extractor,
-el factor de coincidencia falla; las identidades sin datos suficientes no cuentan.
-La pantalla permite ordenar por las cifras menos fiables
-(`backend/app/services/reconciliation.py`, `src/components/Ingestion.tsx`).
+The confidence score for each line item is the simple average of applicable checks:
+exact agreement between extractors, presence of the figure in the page text, and
+related accounting identity checks. If there is no second extractor, the agreement
+factor fails; identities without sufficient data are not counted. The screen can sort
+by the least reliable figures (`backend/app/services/reconciliation.py`,
+`src/components/Ingestion.tsx`).
 
-## Vista Company y extracción narrativa
+## Company view and narrative extraction
 
-La vista por defecto (**Company**) muestra dirección, clientes, hitos, pipeline,
-estrategia Senus 2030 y personas. Todo sale del PDF original, sin datos externos:
+The default **Company** view displays management, customers, milestones, pipeline,
+the Senus 2030 strategy, and people. All of this information comes from the original
+PDF, with no external data:
 
-- `backend/app/services/narrative.py` extrae de forma determinista (sin LLM) el perfil,
-  highlights, clientes, hitos, drivers y notas. Cada dato lleva la **página** y la
-  **cita literal**; un dato cuya cita no aparece en esa página se descarta.
-- Se guarda en `documents.narrative_json` (migración `e1f4a7c9d2b3`) durante la ingesta
-  y se sirve en `GET /api/company?period=`. Si falta, se extrae al vuelo desde el PDF.
-  Los datos sembrados sin PDF devuelven 404.
-- `checks` contiene cruces entre cifras de la narrativa (p. ej. los ≈€425k de
-  Nov–Dec deben caber en los ≈€700k cerrados en el periodo).
-- `backend/scripts/compare_narrative_to_txt.py` compara la extracción con el TXT de
-  referencia (`Otros/`); `tests/test_narrative.py` exige ≥99 % de cobertura.
-- Tras actualizar: `python -m alembic upgrade head` y reprocesar el PDF desde Documents.
-- La gráfica de objetivo solo dibuja la aritmética del objetivo (≥50 % anual sobre los
-  ingresos FY25, `strategy.min_cagr_pct`); no hay previsión, porque el informe no dice
-  cuándo el pipeline se convierte en ingresos.
-- Los datos sin fuente en el PDF (precio de acción, CEO, ingresos por línea de producto)
-  no se muestran.
+- `backend/app/services/narrative.py` deterministically extracts (without an LLM)
+  the profile, highlights, customers, milestones, drivers, and notes. Every item
+  includes the **page** and a **verbatim quote**; an item is discarded if its quote
+  does not appear on that page.
+- The data is saved in `documents.narrative_json` (migration `e1f4a7c9d2b3`) during
+  ingestion and served by `GET /api/company?period=`. If it is missing, it is
+  extracted from the PDF on demand. Seeded data without a PDF returns 404.
+- `checks` contains cross-checks between narrative figures (for example, the
+  approximately €425k from Nov–Dec must fit within the approximately €700k closed
+  during the period).
+- `backend/scripts/compare_narrative_to_txt.py` compares the extraction with the
+  reference TXT (`Otros/`); `tests/test_narrative.py` requires at least 99% coverage.
+- After an update, run `python -m alembic upgrade head` and reprocess the PDF from
+  Documents.
+- The target chart only shows the target arithmetic (at least 50% annual growth over
+  FY25 revenue, `strategy.min_cagr_pct`); it is not a forecast because the report
+  does not state when the pipeline will convert into revenue.
+- Information without a source in the PDF (share price, CEO, revenue by product
+  line) is not displayed.
 
-### Insights y chat con IA (Company)
+### Company AI insights and chat
 
-Son texto generado, no citas del PDF, y la vista lo indica. Requieren `GROQ_API_KEY`
-en `backend/.env`; sin clave devuelven 503 y el resto de la vista sigue funcionando.
+These are generated text, not quotes from the PDF, and the view labels them
+accordingly. They require `GROQ_API_KEY` in `backend/.env`; without a key they return
+503 while the rest of the view continues to work.
 
-- `GET /api/company/insights?period=&force=` devuelve 3 interpretaciones (título + texto);
-  se cachean en memoria del proceso y `force=true` las regenera.
-- `POST /api/company/chat` responde preguntas con el historial reciente (máx. 8 turnos).
-- El contexto es la narrativa extraída (sin citas ni páginas), las notas de `checks` y
-  las partidas de los estados financieros del periodo; el prompt prohíbe inventar cifras,
-  previsiones o probabilidades y sumar importes que `checks` marca como solapados
-  (`backend/app/services/company_ai.py`, `backend/app/api/company.py`,
-  `backend/tests/test_company_ai.py`).
+- `GET /api/company/insights?period=&force=` returns three interpretations (title
+  and text); they are cached in process memory, and `force=true` regenerates them.
+- `POST /api/company/chat` answers questions using recent conversation history (up to
+  eight turns).
+- The context is the extracted narrative (without quotes or page numbers), `checks`
+  notes, and the financial statement line items for the period. The prompt prohibits
+  inventing figures, forecasts, or probabilities, and adding amounts that `checks`
+  marks as overlapping (`backend/app/services/company_ai.py`,
+  `backend/app/api/company.py`, `backend/tests/test_company_ai.py`).
 
-## Datos, orígenes y KPIs
+## Data, sources, and KPIs
 
-Cada cifra/KPI se clasifica como:
+Each figure/KPI is classified as:
 
-- `reported`: figura reportada en un documento o fuente identificada.
-- `derived`: calculada por el sistema; la fórmula se devuelve como metadato.
-- `n/d` (`na` en el esquema): no disponible, con nota explicativa cuando corresponde.
+- `reported`: reported in a document or identified source.
+- `derived`: calculated by the system; the formula is returned as metadata.
+- `n/a` (`na` in the schema): unavailable, with an explanatory note when applicable.
 
-La ausencia se conserva como `null`; no se sustituye por cero. El catálogo incluye,
-entre otros, márgenes, EBITDA, FCF, burn mensual, runway, ratios de liquidez,
-solvencia, apalancamiento, retornos y DSCR. Algunos ejemplos de fórmulas son
-`Gross profit / Revenue × 100`, `Cash / Monthly burn` y
+Missing values are preserved as `null`; they are not replaced with zero. The catalog
+includes margins, EBITDA, FCF, monthly burn, runway, liquidity ratios, solvency,
+leverage, returns, and DSCR, among others. Example formulas include
+`Gross profit / Revenue × 100`, `Cash / Monthly burn`, and
 `Net cash from operations / (Interest + abs(Loan repayments))`
 (`backend/app/services/metrics.py`, `backend/scripts/extract_pdf.py`).
 
-MoM, ventas por canal y bookings no están disponibles en las fuentes actuales y
-aparecen como `n/d`. DSCR se deja `n/d` si el flujo operativo es negativo. El backend
-rechaza comparaciones de distinta duración con HTTP 422; la serie YoY del resumen
-también exige fechas de inicio con un año de diferencia y duración igual
+MoM, sales by channel, and bookings are not available in the current sources and are
+shown as `n/a`. DSCR is `n/a` when operating cash flow is negative. The backend
+rejects comparisons of different durations with HTTP 422; the summary's YoY series
+also requires start dates one year apart and equal period durations
 (`backend/app/services/metrics.py`, `backend/app/api/financial.py`).
 
-FY2025 es un periodo parcial, no un documento procesado: ingresos **836.991 €** y
-138 cuentas de cliente proceden del enunciado del assignment; la caja inicial
-**140.135 €** procede del cash flow HY2026. No se derivan para FY2025 márgenes,
-EBITDA ni runway, y el resto de partidas está ausente (`backend/scripts/extracted/fy2025_extracted.json`,
-`backend/tests/test_fixtures.py`).
+FY2025 is a partial period, not a processed document: revenue of **€836,991** and
+138 customer accounts come from the assignment brief; opening cash of **€140,135**
+comes from the HY2026 cash flow statement. Margins, EBITDA, and runway are not
+derived for FY2025, and the remaining line items are absent
+(`backend/scripts/extracted/fy2025_extracted.json`, `backend/tests/test_fixtures.py`).
 
-## Validaciones y convenciones
+## Validations and conventions
 
-Las comprobaciones deterministas usan tolerancia de **±1 €**. Se omiten si faltan
-entradas requeridas; las identidades de subtotales tratan una partida ausente como
-cero. Las reglas implementadas incluyen:
+Deterministic checks use a tolerance of **±€1**. Checks are skipped when required
+inputs are missing; subtotal identities treat a missing line item as zero. The
+implemented rules include:
 
 1. Revenue − Cost of sales = Gross Profit (**error**).
-2. Activos menos pasivos = equity/net assets (**error**).
-3. Resultado operativo + depreciación = EBITDA (**error**).
-4. Cash al inicio + variación neta = cash al cierre (**error**).
-5. Subtotales de balance iguales a la suma de sus componentes (**warning**).
+2. Assets − liabilities = equity/net assets (**error**).
+3. Operating result + depreciation = EBITDA (**error**).
+4. Opening cash + net change = closing cash (**error**).
+5. Balance sheet subtotals equal the sum of their components (**warning**).
 
-La fuente de HY2025 contiene una discrepancia concreta: en la página 5 del PDF el
-comparativo imprime revenue 340.931 €, cost of sales 69.600 € y Gross Profit
-272.331 €. Sin embargo, `340.931 − 69.600 = 271.331`; la diferencia es 1.000 €,
-superior a la tolerancia. La extracción conserva el subtotal impreso y la regla
-contable lo señala, no lo corrige (`backend/data/Senus_HY2026_Interim_Results.pdf`,
+The HY2025 source has a specific discrepancy: on page 5 of the PDF, the comparative
+column reports revenue of €340,931, cost of sales of €69,600, and Gross Profit of
+€272,331. However, `€340,931 − €69,600 = €271,331`, a difference of €1,000, which
+exceeds the tolerance. Extraction preserves the printed subtotal and the accounting
+rule flags it; it does not correct it (`backend/data/Senus_HY2026_Interim_Results.pdf`,
 `backend/tests/test_extract.py`, `backend/app/services/validation.py`).
 
-El parser normaliza a negativo determinadas líneas de pérdidas si aparecen positivas,
-incluyendo operating loss y loss for the period. EBITDA es derivado como resultado
-operativo + depreciación. La dirección de otras partidas sigue el valor parseado del
-documento; no se afirma que todos los costes se normalicen automáticamente
+The parser normalizes certain loss line items to negative values when they appear as
+positive values, including operating loss and loss for the period. EBITDA is derived
+as operating result + depreciation. Other line-item signs follow the parsed document
+value; the parser does not claim to normalize all costs automatically
 (`backend/scripts/extract_pdf.py`).
 
-## Demo y datos reproducibles
+## Demo and reproducible data
 
-Hay fixtures extraídos para HY2026, HY2025 y el FY2025 parcial en
-`backend/scripts/extracted/`. En Compose, `SEED_FROM_DISK=false` evita que el arranque
-cargue periodos automáticamente. El script `backend/scripts/reset_demo.py` borra los
-registros de la base configurada, recrea los usuarios demo y carga esos tres fixtures.
-Es destructivo y exige `--confirm`; antes de usarlo hay que verificar `DATABASE_URL`.
-Los fixtures no restauran los PDFs originales. El reset no se ejecutó contra una base
-de datos durante esta validación.
+Extracted fixtures for HY2026, HY2025, and partial FY2025 are in
+`backend/scripts/extracted/`. In Compose, `SEED_FROM_DISK=false` prevents periods
+from being loaded automatically on startup. The
+`backend/scripts/reset_demo.py` script deletes records from the configured database,
+recreates the demo users, and loads those three fixtures. It is destructive and
+requires `--confirm`; check `DATABASE_URL` before using it. The fixtures do not
+restore the original PDFs. The reset script was not run against a database during
+this validation.
 
-## Ejecución de pruebas y verificación
+## Tests and verification
 
-Comandos desde la raíz del repositorio:
+Run these commands from the repository root:
 
 ```powershell
 python -m pytest backend\tests -q
@@ -264,44 +306,96 @@ npm run build
 npm run lint
 ```
 
-Resultado observado en este checkout:
+Results observed in this checkout:
 
-- Backend: **91 passed**, 7 warnings (Pydantic deprecated-config y clave HMAC corta
-  en el test de seguridad).
+- Backend: **91 passed**, 7 warnings (Pydantic deprecated-config and a short HMAC
+  key in the security test).
 - Frontend: **6 passed**.
-- Build TypeScript/Vite: **correcto**; Vite advierte que el chunk JavaScript principal
-  supera 500 kB minificado.
-- Lint: **falla** en `react-hooks/set-state-in-effect` en
-  `src/components/Dashboard.tsx`; además informa dos warnings de dependencias de
-  hooks en `Dashboard.tsx` y `App.tsx`. No se afirma que lint esté limpio.
-- CI (`.github/workflows/ci.yml`) ejecuta pytest, Vitest y build; no ejecuta ESLint.
+- TypeScript/Vite build: **successful**; Vite warns that the main JavaScript chunk
+  exceeds 500 kB minified.
+- Lint: **fails** on `react-hooks/set-state-in-effect` in
+  `src/components/Dashboard.tsx`; it also reports two hook dependency warnings in
+  `Dashboard.tsx` and `App.tsx`. Lint is not claimed to be clean.
+- CI (`.github/workflows/ci.yml`) runs pytest, Vitest, and the build; it does not run
+  ESLint.
 
-Se hizo una comprobación puntual del texto extraído directamente del PDF real,
-página 5, para las tres cifras comparativas de HY2025 señaladas arriba. No se hizo
-una revisión visual independiente de todas las partidas del informe ni una llamada
-de validación en vivo a Groq; los tests del proveedor usan respuestas simuladas.
+A targeted check was made against the text extracted directly from page 5 of the
+source PDF for the three HY2025 comparative figures noted above. No independent
+visual review of every report line item or live Groq validation call was performed;
+provider tests use mocked responses.
 
-## Limitaciones conocidas
+## AI-assisted development
 
-- La ruta PDF extrae texto con `pdfplumber`; no hay OCR para páginas escaneadas.
-- El parser está ajustado a estados tabulares de dos columnas y a las etiquetas y
-  saltos de línea cubiertos por sus patrones/tests; no se verifica soporte general
-  para cualquier diseño de informe.
-- No hay datos mensuales, por canal o bookings en las fuentes incluidas; son `n/d`.
-- FY2025 solo contiene los datos explícitos indicados arriba.
-- El código de Dashboard muestra una referencia de “50% CAGR track” calculada como
-  1,5 × ingresos FY2025; no es un KPI del catálogo ni una cifra calculada a partir
-  de periodos mensuales (`src/components/Dashboard.tsx`).
-- No hay selector de audiencia. Los roles actuales son `admin` y `viewer`.
-- El restablecimiento de demo y el estado de una base externa no se verificaron
-  ejecutando el script contra esa base.
+Development used both OpenCode with free models and the paid GitHub Copilot service.
+The main product and architecture decisions were made before using AI to implement
+them. Where domain knowledge was missing—for example, when deciding which financial
+KPIs would be useful—AI was asked to propose a list; that output supported the
+decision rather than replacing it.
 
-## Desarrollo asistido por IA
+AI assistance was used to develop the frontend and to iterate on improvements to
+document ingestion. It was also used to create and run tests and to diagnose and fix
+errors found during development. At runtime, the optional financial extraction and
+Company insights/chat integration is a separate Groq API integration; OpenCode and
+Copilot are development tools, not application dependencies.
 
-### Herramientas utilizadas
+## Security
 
+- **SQL injection:** all database access goes through SQLAlchemy's ORM with bound
+  parameters; the backend contains no string-built SQL.
+- **File uploads:** admin-only; the API enforces a 20 MB limit (Nginx also rejects
+  bodies over 21 MB), requires the `.pdf` extension and `%PDF-` magic bytes,
+  sanitises the stored filename (random UUID prefix, restricted characters), and
+  deletes files that `pdfplumber` cannot parse.
+- **Frontend:** React escapes rendered values and the code does not use
+  `dangerouslySetInnerHTML`. Nginx sends `Content-Security-Policy`,
+  `X-Content-Type-Options`, `X-Frame-Options`, and `Referrer-Policy` headers.
+- **Authentication:** bcrypt password hashes, signed JWTs, and server-side `admin`
+  checks on write endpoints. CORS is limited to the local development origins.
+  Login is throttled in memory: five failed attempts lock the account for five
+  minutes (per process).
 
-### Qué pedí a cada herramienta
+**Demo credentials (intentional):** this is a demo, so the login page pre-fills and
+displays the seeded accounts (`board@senus.com` as admin and `viewer@senus.com` as
+read-only, both with password `senus123`) to make evaluation easy. This is a
+deliberate trade-off, not an oversight; a real deployment would remove the
+pre-filled credentials, the on-screen hint, and the seeded users, and set a strong
+`SECRET_KEY`.
 
+Known security gaps (accepted for this demo, to fix before any real use):
 
-### Dónde corregí a la IA
+- **Transport:** the app is served over plain HTTP, so credentials and JWTs travel
+  unencrypted. Production needs HTTPS (TLS termination).
+- **Token storage:** the JWT is kept in `localStorage` (readable by any XSS); an
+  HttpOnly cookie would be safer. Tokens last 8 hours and cannot be revoked.
+- **Secrets and credentials:** the default `SECRET_KEY` and database password
+  (`senus_dev`) are unchanged, and the demo accounts are public (see above).
+- **Exposed services:** Compose binds PostgreSQL (5432) and the API (8000) to
+  `127.0.0.1` only; the frontend (8080) is the only public port. The API runs
+  without `--reload`, so code changes require `docker compose up --build`.
+- **Uploads:** files are not antivirus-scanned and are parsed with `pdfplumber`
+  inside the API process; a malicious PDF could exhaust resources.
+- **LLM data and prompt injection:** when `GROQ_API_KEY` is set, document text is
+  sent to Groq, a third party. Text inside an uploaded PDF could attempt prompt
+  injection; mitigations are page-text grounding, deterministic precedence, and
+  human review, not a guarantee.
+- **Login throttle:** in-memory and per process; it resets on restart and does not
+  work across several instances.
+- **CSP:** it allows `'unsafe-inline'` styles (needed by the current frontend).
+- **Authorisation:** only two roles; viewers can read every document and download
+  the original PDFs. There is no per-document or per-audience access control.
+
+## Known limitations
+
+- The PDF workflow extracts text with `pdfplumber`; it does not OCR scanned pages.
+- The parser is tuned to two-column tabular statements and the labels and line breaks
+  covered by its patterns/tests; general support for arbitrary report layouts has
+  not been verified.
+- The included sources do not contain monthly data, sales by channel, or bookings;
+  these are shown as `n/a`.
+- FY2025 contains only the explicit data described above.
+- The Dashboard code displays a "50% CAGR track" reference calculated as 1.5 × FY2025
+  revenue; it is not a catalog KPI or a figure calculated from monthly periods
+  (`src/components/Dashboard.tsx`).
+- There is no audience selector. The current roles are `admin` and `viewer`.
+- The demo reset and the state of an external database were not verified by running
+  the script against that database.
