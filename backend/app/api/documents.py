@@ -1,4 +1,5 @@
 import json
+import re
 import uuid
 from datetime import date, datetime, timezone
 from pathlib import Path
@@ -33,6 +34,7 @@ from app.services import period_detector
 router = APIRouter(prefix="/api/documents", tags=["documents"])
 
 UPLOAD_DIR = Path(__file__).resolve().parents[2] / settings.UPLOAD_DIR
+MAX_UPLOAD_BYTES = 20 * 1024 * 1024
 
 
 def _reload(doc: Document) -> DocumentResponse:
@@ -98,12 +100,29 @@ async def upload_document(
     if not original.lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Only PDF uploads are supported")
 
-    UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
-    stored = UPLOAD_DIR / f"{uuid.uuid4().hex}_{original}"
-    stored.write_bytes(await file.read())
+    # Read at most MAX_UPLOAD_BYTES + 1 so oversized files are rejected without
+    # loading them fully into memory.
+    content = await file.read(MAX_UPLOAD_BYTES + 1)
+    if len(content) > MAX_UPLOAD_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"PDF exceeds the {MAX_UPLOAD_BYTES // (1024 * 1024)} MB limit",
+        )
+    if not content.startswith(b"%PDF-"):
+        raise HTTPException(status_code=400, detail="File content is not a valid PDF")
 
-    # Read pages and detect periods from document headers
-    pages = read_pages(str(stored))
+    UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+    safe_name = re.sub(r"[^A-Za-z0-9._-]", "_", original)[:100]
+    stored = UPLOAD_DIR / f"{uuid.uuid4().hex}_{safe_name}"
+    stored.write_bytes(content)
+
+    # Read pages and detect periods from document headers; discard the file if
+    # it cannot be parsed so no orphaned uploads accumulate.
+    try:
+        pages = read_pages(str(stored))
+    except Exception:
+        stored.unlink(missing_ok=True)
+        raise HTTPException(status_code=400, detail="Could not read the PDF file")
     detected = period_detector.detect_all_periods(pages)
 
     detected_periods = [
